@@ -1,0 +1,12 @@
+{
+  "expo": {
+    "name": "Work Context Platform",
+    "slug": "work-context-platform",
+    "scheme": "wcp",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "platforms": ["ios", "android", "web"],
+    "plugins": ["expo-router"]
+  }
+}

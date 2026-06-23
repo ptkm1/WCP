@@ -1,0 +1,21 @@
+{
+  "name": "@wcp/integrations-git",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "build": "../db/node_modules/.bin/tsc --noEmit",
+    "lint": "../db/node_modules/.bin/tsc --noEmit",
+    "typecheck": "../db/node_modules/.bin/tsc --noEmit"
+  },
+  "dependencies": {
+    "@wcp/application": "workspace:*",
+    "@wcp/db": "workspace:*",
+    "@wcp/domain": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.4"
+  }
+}

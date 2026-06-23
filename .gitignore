@@ -1,0 +1,14 @@
+node_modules
+.turbo
+dist
+build
+.expo
+.expo-shared
+.DS_Store
+coverage
+*.log
+apps/desktop/src-tauri/target
+apps/desktop/src-tauri/gen
+apps/desktop/src-tauri/Cargo.lock
+packages/db/local.db
+packages/db/.drizzle-home

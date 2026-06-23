@@ -1,0 +1,23 @@
+{
+  "name": "@wcp/db",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "build": "tsc --noEmit",
+    "lint": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "db:generate": "node ./scripts/drizzle-kit.mjs generate",
+    "db:migrate": "node ./scripts/migrate.mjs",
+    "db:seed": "node ./scripts/seed.mjs"
+  },
+  "dependencies": {
+    "drizzle-orm": "^0.33.0"
+  },
+  "devDependencies": {
+    "drizzle-kit": "^0.24.2",
+    "typescript": "^5.5.4"
+  }
+}

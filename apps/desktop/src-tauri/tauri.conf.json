@@ -1,0 +1,27 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Work Context Platform",
+  "version": "0.1.0",
+  "identifier": "com.goker.wcp",
+  "build": {
+    "beforeDevCommand": "pnpm dev",
+    "beforeBuildCommand": "pnpm build",
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:1420"
+  },
+  "bundle": {
+    "active": false,
+    "icon": []
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Work Context Platform",
+        "width": 1320,
+        "height": 900,
+        "resizable": true
+      }
+    ]
+  }
+}
