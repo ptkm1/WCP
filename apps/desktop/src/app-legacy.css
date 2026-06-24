@@ -854,6 +854,13 @@
   margin-top: 0;
 }
 
+.fieldHint {
+  display: block;
+  margin-top: 6px;
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
 .statusCard {
   display: grid;
   gap: 4px;

@@ -220,6 +220,13 @@ interface OrganizationIdentityImportDto {
   sources: string[];
 }
 
+interface FixRepositoryRemoteResultDto {
+  repositoryId: string;
+  previousRemoteUrl?: string | null;
+  updatedRemoteUrl?: string | null;
+  changed: boolean;
+}
+
 interface CreateRepositoryResultDto {
   repository: RepositoryListItemDto;
 }
@@ -965,6 +972,8 @@ export function App() {
   const [orgEditKind, setOrgEditKind] = useState("company");
   const [orgSetupBusy, setOrgSetupBusy] = useState(false);
   const [orgSetupError, setOrgSetupError] = useState<string | null>(null);
+  const [orgSetupSuccess, setOrgSetupSuccess] = useState<string | null>(null);
+  const [orgEnvFormDirty, setOrgEnvFormDirty] = useState(false);
   const [newOrgProjectName, setNewOrgProjectName] = useState("");
   const [newOrgProjectDescription, setNewOrgProjectDescription] = useState("");
   const [orgEnvProviderType, setOrgEnvProviderType] = useState("");
@@ -1074,12 +1083,31 @@ export function App() {
     }
   }, [organizations, orgSetupSelectedId]);
 
+  const orgEnvSyncRef = useRef<string | null>(null);
+
   useEffect(() => {
+    if (orgSetupSelectedId !== orgEnvSyncRef.current) {
+      orgEnvSyncRef.current = orgSetupSelectedId;
+      const organization =
+        organizations.find((org) => org.id === orgSetupSelectedId) ?? null;
+      syncOrgEnvForm(organization);
+      setOrgIdentityImportPreview(null);
+      setOrgEnvFormDirty(false);
+      setOrgSetupSuccess(null);
+      return;
+    }
+
+    if (orgEnvFormDirty) {
+      return;
+    }
+
     const organization =
       organizations.find((org) => org.id === orgSetupSelectedId) ?? null;
     syncOrgEnvForm(organization);
     setOrgIdentityImportPreview(null);
+  }, [orgSetupSelectedId, organizations, orgEnvFormDirty]);
 
+  useEffect(() => {
     const importableRepos = repositories.filter(
       (repository) =>
         repository.organizationId === orgSetupSelectedId &&
@@ -1098,7 +1126,7 @@ export function App() {
       }
       return importableRepos[0]?.id ?? null;
     });
-  }, [orgSetupSelectedId, organizations, repositories]);
+  }, [orgSetupSelectedId, repositories]);
 
   useEffect(() => {
     if (activeView !== "repos" && activeView !== "organizations") {
@@ -1147,6 +1175,7 @@ export function App() {
     activeView,
     newRepoProjectId,
     orgSetupSelectedId,
+    organizations,
     selectedOrganizationId,
     selectedRepoId,
   ]);
@@ -1918,6 +1947,30 @@ export function App() {
       ),
     [orgSetupSelectedId, repositories],
   );
+  const orgIdentitySelectedRepo = useMemo(
+    () =>
+      orgSetupRepositories.find(
+        (repository) => repository.id === orgIdentityRepoId,
+      ) ?? null,
+    [orgIdentityRepoId, orgSetupRepositories],
+  );
+  const orgIdentitySshAlias =
+    orgEnvSshHostAlias.trim() ||
+    orgSetupOrganization?.sshHostAlias?.trim() ||
+    "";
+  const orgIdentityRemoteUrl =
+    orgIdentityGuardrail?.remoteUrl ??
+    orgIdentitySelectedRepo?.remoteUrl ??
+    null;
+  const orgIdentityRemoteFixPreview = useMemo(() => {
+    if (!orgIdentityRemoteUrl || !orgIdentitySshAlias) {
+      return null;
+    }
+    if (!needsSshRemoteAliasFix(orgIdentityRemoteUrl, orgIdentitySshAlias)) {
+      return null;
+    }
+    return previewSshRemoteWithAlias(orgIdentityRemoteUrl, orgIdentitySshAlias);
+  }, [orgIdentityRemoteUrl, orgIdentitySshAlias]);
   const orgSetupGaps = useMemo(
     () =>
       resolvedWorkContext?.gaps ??
@@ -2415,6 +2468,11 @@ export function App() {
     }
   }
 
+  function markOrgEnvFormDirty() {
+    setOrgEnvFormDirty(true);
+    setOrgSetupSuccess(null);
+  }
+
   function applyOrganizationIdentityImport(
     identityImport: OrganizationIdentityImportDto,
   ) {
@@ -2433,6 +2491,7 @@ export function App() {
     if (identityImport.gitUserEmail) {
       setOrgEnvGitUserEmail(identityImport.gitUserEmail);
     }
+    markOrgEnvFormDirty();
   }
 
   async function handleImportOrganizationIdentity() {
@@ -2470,19 +2529,33 @@ export function App() {
     try {
       setOrgSetupBusy(true);
       setOrgSetupError(null);
-      await invoke("update_organization_environment", {
-        organizationId: orgSetupSelectedId,
-        providerType: orgEnvProviderType.trim() || null,
-        providerHost: orgEnvProviderHost.trim() || null,
-        sshHostAlias: orgEnvSshHostAlias.trim() || null,
-        gitUserName: orgEnvGitUserName.trim() || null,
-        gitUserEmail: orgEnvGitUserEmail.trim() || null,
-        branchPattern: orgEnvBranchPattern.trim() || null,
-        prConvention: orgEnvPrConvention.trim() || null,
-        commitConvention: orgEnvCommitConvention.trim() || null,
-        notesJson: serializeUsefulLinks(orgUsefulLinks),
-      });
-      await reloadOrganizations();
+      setOrgSetupSuccess(null);
+      const response = await invoke<{ organization: OrganizationListItemDto }>(
+        "update_organization_environment",
+        {
+          organizationId: orgSetupSelectedId,
+          providerType: orgEnvProviderType.trim() || null,
+          providerHost: orgEnvProviderHost.trim() || null,
+          sshHostAlias: orgEnvSshHostAlias.trim() || null,
+          gitUserName: orgEnvGitUserName.trim() || null,
+          gitUserEmail: orgEnvGitUserEmail.trim() || null,
+          branchPattern: orgEnvBranchPattern.trim() || null,
+          prConvention: orgEnvPrConvention.trim() || null,
+          commitConvention: orgEnvCommitConvention.trim() || null,
+          notesJson: serializeUsefulLinks(orgUsefulLinks),
+        },
+      );
+      setOrganizations((current) =>
+        current.map((organization) =>
+          organization.id === response.organization.id
+            ? response.organization
+            : organization,
+        ),
+      );
+      syncOrgEnvForm(response.organization);
+      setOrgEnvFormDirty(false);
+      setOrgSetupSuccess("Identidade Git salva.");
+      await refreshOrganizationLogos([response.organization]);
     } catch (saveError) {
       setOrgSetupError(
         extractErrorMessage(saveError, "Falha ao salvar identidade Git"),
@@ -2653,6 +2726,50 @@ export function App() {
     } catch (applyError) {
       setOrgIdentityResult(
         extractErrorMessage(applyError, "Falha ao aplicar identidade"),
+      );
+    } finally {
+      setOrgIdentityBusy(false);
+    }
+  }
+
+  async function handleFixRepositoryRemote() {
+    if (!orgIdentityRepoId) {
+      return;
+    }
+
+    if (!orgIdentitySshAlias) {
+      setOrgIdentityResult(
+        "Configure e salve o alias SSH no perfil antes de corrigir o remoto.",
+      );
+      return;
+    }
+
+    try {
+      setOrgIdentityBusy(true);
+      setOrgIdentityResult(null);
+      const response = await invoke<FixRepositoryRemoteResultDto>(
+        "fix_repository_remote_ssh_alias",
+        {
+          repositoryId: orgIdentityRepoId,
+          sshHostAlias: orgIdentitySshAlias,
+        },
+      );
+      if (response.changed) {
+        setOrgIdentityResult(
+          `Remoto atualizado: ${response.previousRemoteUrl ?? "?"} → ${response.updatedRemoteUrl ?? "?"}`,
+        );
+        await reloadRepositories();
+        const guardrail = await invoke<RepositoryGuardrailDto | null>(
+          "get_repository_guardrail",
+          { repositoryId: orgIdentityRepoId },
+        );
+        setOrgIdentityGuardrail(guardrail);
+      } else {
+        setOrgIdentityResult("Remoto ja usa o alias SSH esperado.");
+      }
+    } catch (fixError) {
+      setOrgIdentityResult(
+        extractErrorMessage(fixError, "Falha ao corrigir remoto"),
       );
     } finally {
       setOrgIdentityBusy(false);
@@ -4724,6 +4841,9 @@ export function App() {
               {orgSetupError ? (
                 <p className="errorText">{orgSetupError}</p>
               ) : null}
+              {orgSetupSuccess ? (
+                <p className="resultText">{orgSetupSuccess}</p>
+              ) : null}
 
               {orgSetupOrganization ? (
                 <>
@@ -5194,9 +5314,10 @@ export function App() {
                           Provider type
                           <select
                             value={orgEnvProviderType}
-                            onChange={(event) =>
-                              setOrgEnvProviderType(event.target.value)
-                            }
+                            onChange={(event) => {
+                              markOrgEnvFormDirty();
+                              setOrgEnvProviderType(event.target.value);
+                            }}
                           >
                             <option value="">Selecione</option>
                             <option value="github">GitHub</option>
@@ -5211,45 +5332,57 @@ export function App() {
                           Provider host
                           <input
                             value={orgEnvProviderHost}
-                            onChange={(event) =>
-                              setOrgEnvProviderHost(event.target.value)
-                            }
+                            onChange={(event) => {
+                              markOrgEnvFormDirty();
+                              setOrgEnvProviderHost(event.target.value);
+                            }}
                           />
                         </label>
                         <label>
                           Alias SSH
                           <input
                             value={orgEnvSshHostAlias}
-                            onChange={(event) =>
-                              setOrgEnvSshHostAlias(event.target.value)
-                            }
+                            onChange={(event) => {
+                              markOrgEnvFormDirty();
+                              setOrgEnvSshHostAlias(event.target.value);
+                            }}
+                            placeholder="github-ptkm1"
                           />
+                          <span className="muted fieldHint">
+                            Host do ~/.ssh/config usado no remoto (ex.{" "}
+                            <code>git@github-ptkm1:org/repo.git</code>). O
+                            provider host acima continua sendo{" "}
+                            <code>github.com</code>.
+                          </span>
                         </label>
                         <label>
                           Git user.name
                           <input
                             value={orgEnvGitUserName}
-                            onChange={(event) =>
-                              setOrgEnvGitUserName(event.target.value)
-                            }
+                            onChange={(event) => {
+                              markOrgEnvFormDirty();
+                              setOrgEnvGitUserName(event.target.value);
+                            }}
                           />
                         </label>
                         <label>
                           Git user.email
                           <input
                             value={orgEnvGitUserEmail}
-                            onChange={(event) =>
-                              setOrgEnvGitUserEmail(event.target.value)
-                            }
+                            onChange={(event) => {
+                              markOrgEnvFormDirty();
+                              setOrgEnvGitUserEmail(event.target.value);
+                            }}
                           />
                         </label>
                         <label>
                           Padrao de branch
                           <input
                             value={orgEnvBranchPattern}
-                            onChange={(event) =>
-                              setOrgEnvBranchPattern(event.target.value)
-                            }
+                            onChange={(event) => {
+                              markOrgEnvFormDirty();
+                              setOrgEnvBranchPattern(event.target.value);
+                            }}
                             placeholder="feature/*"
                           />
                         </label>
@@ -5257,18 +5390,20 @@ export function App() {
                           Convencao de PR
                           <input
                             value={orgEnvPrConvention}
-                            onChange={(event) =>
-                              setOrgEnvPrConvention(event.target.value)
-                            }
+                            onChange={(event) => {
+                              markOrgEnvFormDirty();
+                              setOrgEnvPrConvention(event.target.value);
+                            }}
                           />
                         </label>
                         <label>
                           Convencao de commit
                           <input
                             value={orgEnvCommitConvention}
-                            onChange={(event) =>
-                              setOrgEnvCommitConvention(event.target.value)
-                            }
+                            onChange={(event) => {
+                              markOrgEnvFormDirty();
+                              setOrgEnvCommitConvention(event.target.value);
+                            }}
                           />
                         </label>
                       </div>
@@ -5282,6 +5417,7 @@ export function App() {
                               <input
                                 value={link.label}
                                 onChange={(event) => {
+                                  markOrgEnvFormDirty();
                                   const next = [...orgUsefulLinks];
                                   next[index] = {
                                     ...next[index],
@@ -5296,6 +5432,7 @@ export function App() {
                               <input
                                 value={link.url}
                                 onChange={(event) => {
+                                  markOrgEnvFormDirty();
                                   const next = [...orgUsefulLinks];
                                   next[index] = {
                                     ...next[index],
@@ -5311,12 +5448,13 @@ export function App() {
                           <Button
                             type="button"
                             variant="outline"
-                            onClick={() =>
+                            onClick={() => {
+                              markOrgEnvFormDirty();
                               setOrgUsefulLinks((current) => [
                                 ...current,
                                 { label: "", url: "" },
-                              ])
-                            }
+                              ]);
+                            }}
                           >
                             Adicionar link
                           </Button>
@@ -5355,6 +5493,22 @@ export function App() {
                             ))}
                           </select>
                         </label>
+                        {orgIdentityRemoteFixPreview ? (
+                          <StatusAlert
+                            status="warning"
+                            title="Remoto SSH divergente do perfil"
+                          >
+                            O <code>origin</code> usa{" "}
+                            <code>
+                              {parseSshRemoteHostAlias(
+                                orgIdentityRemoteUrl ?? "",
+                              ) ?? "?"}
+                            </code>
+                            , mas o perfil espera{" "}
+                            <code>{orgIdentitySshAlias}</code>. Ao corrigir:{" "}
+                            <code>{orgIdentityRemoteFixPreview}</code>
+                          </StatusAlert>
+                        ) : null}
                         <div className="actionRow">
                           <Button
                             type="button"
@@ -5363,6 +5517,19 @@ export function App() {
                             disabled={orgIdentityBusy || !orgIdentityRepoId}
                           >
                             Aplicar identidade
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => void handleFixRepositoryRemote()}
+                            disabled={
+                              orgIdentityBusy ||
+                              !orgIdentityRepoId ||
+                              !orgIdentityRemoteFixPreview
+                            }
+                          >
+                            <GitBranch className="h-4 w-4" aria-hidden />
+                            Corrigir remoto
                           </Button>
                           <Button
                             type="button"
@@ -6968,6 +7135,43 @@ function formatTaskStatus(status: string): string {
     default:
       return status.replace(/_/g, " ");
   }
+}
+
+function parseSshRemoteHostAlias(remoteUrl: string): string | null {
+  if (!remoteUrl.startsWith("git@")) {
+    return null;
+  }
+
+  return remoteUrl.replace(/^git@/, "").split(":")[0] ?? null;
+}
+
+function previewSshRemoteWithAlias(
+  remoteUrl: string,
+  sshHostAlias: string,
+): string | null {
+  if (!remoteUrl.startsWith("git@")) {
+    return null;
+  }
+
+  const path = remoteUrl.replace(/^git@/, "").split(":").slice(1).join(":");
+  const alias = sshHostAlias.trim();
+  if (!path || !alias) {
+    return null;
+  }
+
+  return `git@${alias}:${path}`;
+}
+
+function needsSshRemoteAliasFix(
+  remoteUrl: string | null | undefined,
+  sshHostAlias: string | null | undefined,
+): boolean {
+  const alias = sshHostAlias?.trim();
+  if (!alias || !remoteUrl?.startsWith("git@")) {
+    return false;
+  }
+
+  return parseSshRemoteHostAlias(remoteUrl) !== alias;
 }
 
 function formatValidationStatus(status: string): string {

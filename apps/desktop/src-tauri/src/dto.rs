@@ -419,6 +419,15 @@ pub struct OrganizationIdentityImportDto {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct FixRepositoryRemoteResultDto {
+    pub repository_id: String,
+    pub previous_remote_url: Option<String>,
+    pub updated_remote_url: Option<String>,
+    pub changed: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CreateRepositoryResultDto {
     pub repository: RepositoryListItemDto,
 }

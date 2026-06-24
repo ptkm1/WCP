@@ -2,10 +2,12 @@ use crate::db::{
     ensure_db_ready, escape_sql, fetch_repository_by_id, resolve_db_path, sqlite_exec,
 };
 use crate::dto::{
-    ApplyIdentityResultDto, InstallPrePushHookResultDto, RemovePrePushHookResultDto,
-    RepositoryHookStatusDto,
+    ApplyIdentityResultDto, FixRepositoryRemoteResultDto, InstallPrePushHookResultDto,
+    RemovePrePushHookResultDto, RepositoryHookStatusDto,
 };
-use crate::git::{load_guardrail_for_repository, run_git_config};
+use crate::git::{
+    apply_repository_remote_ssh_alias, load_guardrail_for_repository, run_git_config,
+};
 use crate::hooks::{
     install_pre_push_hook, read_pre_push_hook_status, remove_managed_pre_push_hook,
 };
@@ -109,4 +111,27 @@ pub fn remove_repository_pre_push_hook(
         repository_id,
         removed: true,
     })
+}
+
+#[tauri::command]
+pub fn fix_repository_remote_ssh_alias(
+    repository_id: String,
+    ssh_host_alias: Option<String>,
+) -> Result<FixRepositoryRemoteResultDto, String> {
+    let db_path = resolve_db_path()?;
+    ensure_db_ready(&db_path)?;
+
+    if repository_id.trim().is_empty() {
+        return Err("Repositorio invalido".to_string());
+    }
+
+    let resolved_alias = ssh_host_alias
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+
+    apply_repository_remote_ssh_alias(
+        &db_path,
+        repository_id.trim(),
+        resolved_alias.as_deref(),
+    )
 }

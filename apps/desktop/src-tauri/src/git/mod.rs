@@ -1,7 +1,8 @@
-use crate::db::{escape_sql, get_optional_string, get_string, sqlite_json};
+use crate::db::{escape_sql, get_optional_string, get_string, sqlite_exec, sqlite_json};
 use crate::dto::{
-    GitSnapshot, IdentityValidationDto, LocalRepositoryInspectionDto,
-    OrganizationIdentityImportDto, RepositoryGuardrailDto, ValidationCheckDto,
+    FixRepositoryRemoteResultDto, GitSnapshot, IdentityValidationDto,
+    LocalRepositoryInspectionDto, OrganizationIdentityImportDto, RepositoryGuardrailDto,
+    ValidationCheckDto,
 };
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -292,7 +293,7 @@ pub fn suggest_organization_identity_from_repository(
 
     let mut sources = Vec::new();
     let mut provider_host = inspection.provider_host.clone();
-    let ssh_host_alias = inspection.ssh_host_alias.clone();
+    let mut ssh_host_alias = inspection.ssh_host_alias.clone();
 
     if inspection.remote_url.is_some() {
         sources.push("Remoto origin capturado do Git".to_string());
@@ -321,6 +322,22 @@ pub fn suggest_organization_identity_from_repository(
             }
         } else {
             sources.push(format!("Alias SSH inferido do remoto ({alias})"));
+        }
+    }
+
+    if let (Some(alias), Some(host)) = (
+        ssh_host_alias.as_deref(),
+        provider_host.as_deref().or(ssh_host_alias.as_deref()),
+    ) {
+        if alias.eq_ignore_ascii_case(host) {
+            let custom_aliases = ssh_config::find_custom_host_aliases_for_hostname(host);
+            if custom_aliases.len() == 1 {
+                ssh_host_alias = Some(custom_aliases[0].clone());
+                sources.push(format!(
+                    "Alias SSH '{}' sugerido via ~/.ssh/config",
+                    custom_aliases[0]
+                ));
+            }
         }
     }
 
@@ -399,6 +416,129 @@ fn infer_provider_type(host: &str) -> String {
     }
 
     "other".to_string()
+}
+
+pub fn rewrite_ssh_remote_host(remote_url: &str, new_ssh_alias: &str) -> Option<String> {
+    let trimmed_alias = new_ssh_alias.trim();
+    if trimmed_alias.is_empty() || !remote_url.starts_with("git@") {
+        return None;
+    }
+
+    let without_prefix = remote_url.trim().trim_start_matches("git@");
+    let (current_host, path) = without_prefix.split_once(':')?;
+    if current_host.trim().is_empty() || path.trim().is_empty() {
+        return None;
+    }
+
+    if current_host.trim() == trimmed_alias {
+        return None;
+    }
+
+    Some(format!("git@{trimmed_alias}:{path}"))
+}
+
+pub fn apply_repository_remote_ssh_alias(
+    db_path: &Path,
+    repository_id: &str,
+    ssh_host_alias: Option<&str>,
+) -> Result<FixRepositoryRemoteResultDto, String> {
+    let rows = sqlite_json(
+        db_path,
+        &format!(
+            "SELECT r.local_path, r.remote_url,
+                    COALESCE(ri.ssh_host_alias, ep.ssh_host_alias) AS effective_ssh_host_alias
+             FROM repositories r
+             LEFT JOIN repository_identities ri ON ri.repository_id = r.id
+             LEFT JOIN environment_profiles ep ON ep.id = ri.environment_profile_id
+             WHERE r.id = '{}'
+             LIMIT 1;",
+            escape_sql(repository_id)
+        ),
+    )?;
+
+    let Some(row) = rows.first() else {
+        return Err("Repositorio nao encontrado".to_string());
+    };
+
+    let local_path = get_optional_string(row, "local_path")
+        .ok_or_else(|| "Repositorio sem caminho local configurado".to_string())?;
+
+    if !Path::new(&local_path).exists() {
+        return Err(format!("Pasta local nao encontrada: {local_path}"));
+    }
+
+    let expected_alias = ssh_host_alias
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .or_else(|| get_optional_string(row, "effective_ssh_host_alias"))
+        .ok_or_else(|| "Alias SSH nao configurado no perfil da empresa".to_string())?;
+
+    let current_remote = git_value(
+        &local_path,
+        &["config", "--get", "remote.origin.url"],
+    )?
+    .or_else(|| get_optional_string(row, "remote_url"))
+    .ok_or_else(|| "Repositorio sem remote.origin.url configurado".to_string())?;
+
+    if !current_remote.starts_with("git@") {
+        return Err(
+            "Somente remotos SSH (git@host:org/repo.git) podem ser corrigidos automaticamente"
+                .to_string(),
+        );
+    }
+
+    let updated_remote = match rewrite_ssh_remote_host(&current_remote, &expected_alias) {
+        Some(url) => url,
+        None => {
+            return Ok(FixRepositoryRemoteResultDto {
+                repository_id: repository_id.to_string(),
+                previous_remote_url: Some(current_remote.clone()),
+                updated_remote_url: Some(current_remote),
+                changed: false,
+            });
+        }
+    };
+
+    run_git_remote_set_url(&local_path, "origin", &updated_remote)?;
+
+    let now = crate::util::iso_now()?;
+    sqlite_exec(
+        db_path,
+        &format!(
+            "UPDATE repositories
+             SET remote_url = '{}', updated_at = '{}'
+             WHERE id = '{}';",
+            escape_sql(&updated_remote),
+            escape_sql(&now),
+            escape_sql(repository_id)
+        ),
+    )?;
+
+    Ok(FixRepositoryRemoteResultDto {
+        repository_id: repository_id.to_string(),
+        previous_remote_url: Some(current_remote),
+        updated_remote_url: Some(updated_remote),
+        changed: true,
+    })
+}
+
+pub fn run_git_remote_set_url(
+    repository_path: &str,
+    remote_name: &str,
+    url: &str,
+) -> Result<(), String> {
+    let output = Command::new("git")
+        .args(["remote", "set-url", remote_name, url])
+        .current_dir(repository_path)
+        .output()
+        .map_err(|error| format!("Failed to execute git remote: {error}"))?;
+
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+
+    Ok(())
 }
 
 pub fn git_value(repository_path: &str, args: &[&str]) -> Result<Option<String>, String> {
@@ -603,4 +743,25 @@ fn branch_matches_pattern(pattern: &str, branch: &str) -> bool {
     branch.starts_with("feat/")
         || branch.starts_with("fix/")
         || branch.starts_with("chore/")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::rewrite_ssh_remote_host;
+
+    #[test]
+    fn rewrite_ssh_remote_host_replaces_alias() {
+        assert_eq!(
+            rewrite_ssh_remote_host("git@github.com:ptkm1/WCP.git", "github-ptkm1"),
+            Some("git@github-ptkm1:ptkm1/WCP.git".to_string())
+        );
+    }
+
+    #[test]
+    fn rewrite_ssh_remote_host_is_idempotent() {
+        assert_eq!(
+            rewrite_ssh_remote_host("git@github-ptkm1:ptkm1/WCP.git", "github-ptkm1"),
+            None
+        );
+    }
 }

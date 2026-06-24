@@ -11,7 +11,7 @@ mod util;
 use commands::{
     apply_repository_identity, attach_task_artifact, create_organization, create_project,
     create_repository, create_work_item, create_work_item_dependency, delete_work_item_dependency,
-    duplicate_work_item, end_session, get_repository_guardrail, get_repository_hook_status,
+    duplicate_work_item, end_session, fix_repository_remote_ssh_alias, get_repository_guardrail, get_repository_hook_status,
     get_repository_memory, get_task_context, inspect_local_repository_path,
     install_repository_pre_push_hook, list_context_history, list_organizations, list_projects,
     import_organization_identity_from_repository,
@@ -52,6 +52,7 @@ fn main() {
             duplicate_work_item,
             list_projects,
             apply_repository_identity,
+            fix_repository_remote_ssh_alias,
             install_repository_pre_push_hook,
             get_repository_hook_status,
             remove_repository_pre_push_hook,
