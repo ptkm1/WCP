@@ -1,7 +1,7 @@
 use crate::db::{
-    clear_organization_logo, ensure_db_ready, insert_organization, insert_project, resolve_db_path,
-    read_organization_logo_data_url, set_organization_logo, update_environment_profile_for_org,
-    update_organization_record, update_project_record,
+    clear_organization_logo, ensure_db_ready, fetch_repository_by_id, insert_organization,
+    insert_project, resolve_db_path, read_organization_logo_data_url, set_organization_logo,
+    update_environment_profile_for_org, update_organization_record, update_project_record,
 };
 use crate::db::update_repository_context as apply_repository_context;
 use crate::domain::{
@@ -9,10 +9,12 @@ use crate::domain::{
     validate_work_context_links, WorkContextLinksInput,
 };
 use crate::dto::{
-    CreateOrganizationResultDto, CreateProjectResultDto, OrganizationListItemDto,
-    ProjectListItemDto, ResolvedWorkContextDto, UpdateOrganizationEnvironmentResultDto,
-    UpdateOrganizationResultDto, UpdateProjectResultDto, UpdateRepositoryContextResultDto,
+    CreateOrganizationResultDto, CreateProjectResultDto, OrganizationIdentityImportDto,
+    OrganizationListItemDto, ProjectListItemDto, ResolvedWorkContextDto,
+    UpdateOrganizationEnvironmentResultDto, UpdateOrganizationResultDto, UpdateProjectResultDto,
+    UpdateRepositoryContextResultDto,
 };
+use crate::git::suggest_organization_identity_from_repository;
 
 #[tauri::command]
 pub fn list_organizations() -> Result<Vec<OrganizationListItemDto>, String> {
@@ -139,6 +141,43 @@ pub fn read_organization_logo(
     }
 
     read_organization_logo_data_url(&db_path, organization_id.trim())
+}
+
+#[tauri::command]
+pub fn import_organization_identity_from_repository(
+    organization_id: String,
+    repository_id: String,
+) -> Result<OrganizationIdentityImportDto, String> {
+    let db_path = resolve_db_path()?;
+    ensure_db_ready(&db_path)?;
+
+    if organization_id.trim().is_empty() {
+        return Err("Empresa invalida".to_string());
+    }
+
+    if repository_id.trim().is_empty() {
+        return Err("Selecione um repositorio".to_string());
+    }
+
+    let repository = fetch_repository_by_id(&db_path, repository_id.trim())?
+        .ok_or_else(|| "Repositorio nao encontrado".to_string())?;
+
+    if repository.organization_id.as_deref() != Some(organization_id.trim()) {
+        return Err("Repositorio nao pertence a esta empresa".to_string());
+    }
+
+    let local_path = repository
+        .local_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "Repositorio sem pasta local configurada".to_string())?;
+
+    suggest_organization_identity_from_repository(
+        repository_id.trim(),
+        &repository.name,
+        local_path,
+    )
 }
 
 #[tauri::command]

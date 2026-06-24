@@ -1,10 +1,12 @@
 use crate::db::{escape_sql, get_optional_string, get_string, sqlite_json};
 use crate::dto::{
-    GitSnapshot, IdentityValidationDto, LocalRepositoryInspectionDto, RepositoryGuardrailDto,
-    ValidationCheckDto,
+    GitSnapshot, IdentityValidationDto, LocalRepositoryInspectionDto,
+    OrganizationIdentityImportDto, RepositoryGuardrailDto, ValidationCheckDto,
 };
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+mod ssh_config;
 
 pub fn load_guardrail_for_repository(
     db_path: &Path,
@@ -176,6 +178,10 @@ pub fn inspect_local_repository(local_path: &str) -> Result<LocalRepositoryInspe
             default_branch: None,
             git_user_name: None,
             git_user_email: None,
+            ssh_host_alias: None,
+            suggested_provider_type: None,
+            git_user_name_source: None,
+            git_user_email_source: None,
         });
     }
 
@@ -197,6 +203,10 @@ pub fn inspect_local_repository(local_path: &str) -> Result<LocalRepositoryInspe
             default_branch: None,
             git_user_name: None,
             git_user_email: None,
+            ssh_host_alias: None,
+            suggested_provider_type: None,
+            git_user_name_source: None,
+            git_user_email_source: None,
         });
     }
 
@@ -212,6 +222,19 @@ pub fn inspect_local_repository(local_path: &str) -> Result<LocalRepositoryInspe
                 .flatten()
         });
 
+    let (git_user_name, git_user_name_source) =
+        git_config_layered(trimmed, "user.name");
+    let (git_user_email, git_user_email_source) =
+        git_config_layered(trimmed, "user.email");
+    let ssh_host_alias = remote_url.as_deref().and_then(parse_ssh_host_alias);
+    let provider_host = snapshot
+        .provider_host
+        .clone()
+        .or_else(|| ssh_host_alias.clone());
+    let suggested_provider_type = provider_host
+        .as_deref()
+        .map(infer_provider_type);
+
     Ok(LocalRepositoryInspectionDto {
         local_path: trimmed.to_string(),
         path_exists: true,
@@ -221,10 +244,14 @@ pub fn inspect_local_repository(local_path: &str) -> Result<LocalRepositoryInspe
             .and_then(|value| value.to_str())
             .map(str::to_string),
         remote_url: remote_url.clone(),
-        provider_host: snapshot.provider_host.clone(),
+        provider_host,
         default_branch,
-        git_user_name: snapshot.git_user_name.clone(),
-        git_user_email: snapshot.git_user_email.clone(),
+        git_user_name,
+        git_user_email,
+        ssh_host_alias,
+        suggested_provider_type,
+        git_user_name_source,
+        git_user_email_source,
     })
 }
 
@@ -238,17 +265,140 @@ pub fn git_snapshot(repository_path: &str) -> Result<GitSnapshot, String> {
 
     Ok(GitSnapshot {
         provider_host,
-        git_user_name: git_value(
-            repository_path,
-            &["config", "--local", "--get", "user.name"],
-        )?,
-        git_user_email: git_value(
-            repository_path,
-            &["config", "--local", "--get", "user.email"],
-        )?,
+        git_user_name: git_config_layered(repository_path, "user.name").0,
+        git_user_email: git_config_layered(repository_path, "user.email").0,
         ssh_host_alias: remote_url.as_deref().and_then(parse_ssh_host_alias),
         branch_name: git_value(repository_path, &["rev-parse", "--abbrev-ref", "HEAD"])?,
     })
+}
+
+pub fn suggest_organization_identity_from_repository(
+    repository_id: &str,
+    repository_name: &str,
+    local_path: &str,
+) -> Result<OrganizationIdentityImportDto, String> {
+    let inspection = inspect_local_repository(local_path)?;
+
+    if !inspection.path_exists {
+        return Err(format!(
+            "Pasta local nao encontrada: {}",
+            inspection.local_path
+        ));
+    }
+
+    if !inspection.is_git_repo {
+        return Err("A pasta local nao parece ser um repositorio Git.".to_string());
+    }
+
+    let mut sources = Vec::new();
+    let mut provider_host = inspection.provider_host.clone();
+    let ssh_host_alias = inspection.ssh_host_alias.clone();
+
+    if inspection.remote_url.is_some() {
+        sources.push("Remoto origin capturado do Git".to_string());
+    }
+
+    if let Some(source) = inspection.git_user_name_source.as_deref() {
+        sources.push(format!("user.name lido do Git ({source})"));
+    }
+    if let Some(source) = inspection.git_user_email_source.as_deref() {
+        sources.push(format!("user.email lido do Git ({source})"));
+    }
+
+    if let Some(alias) = ssh_host_alias.as_deref() {
+        if let Some(ssh_config) = ssh_config::lookup_ssh_host(alias) {
+            if let Some(host_name) = ssh_config.host_name {
+                if provider_host.as_deref() == Some(alias) || provider_host.is_none() {
+                    provider_host = Some(host_name.clone());
+                }
+                sources.push(format!(
+                    "HostName '{}' resolvido via ~/.ssh/config",
+                    host_name
+                ));
+            }
+            if ssh_config.identity_file.is_some() {
+                sources.push("IdentityFile encontrado no ~/.ssh/config".to_string());
+            }
+        } else {
+            sources.push(format!("Alias SSH inferido do remoto ({alias})"));
+        }
+    }
+
+    let provider_type = provider_host
+        .as_deref()
+        .map(infer_provider_type)
+        .or(inspection.suggested_provider_type.clone());
+
+    if provider_type.is_some() {
+        sources.push("Provider type inferido do host".to_string());
+    }
+
+    Ok(OrganizationIdentityImportDto {
+        repository_id: repository_id.to_string(),
+        repository_name: repository_name.to_string(),
+        provider_type,
+        provider_host,
+        ssh_host_alias,
+        git_user_name: inspection.git_user_name,
+        git_user_email: inspection.git_user_email,
+        remote_url: inspection.remote_url,
+        default_branch: inspection.default_branch,
+        sources,
+    })
+}
+
+fn git_config_layered(
+    repository_path: &str,
+    key: &str,
+) -> (Option<String>, Option<String>) {
+    if let Ok(Some(value)) = git_value(
+        repository_path,
+        &["config", "--local", "--get", key],
+    ) {
+        return (Some(value), Some("local".to_string()));
+    }
+
+    if let Ok(Some(value)) = git_global_value(&["config", "--global", "--get", key]) {
+        return (Some(value), Some("global".to_string()));
+    }
+
+    (None, None)
+}
+
+fn git_global_value(args: &[&str]) -> Result<Option<String>, String> {
+    let output = Command::new("git")
+        .args(args)
+        .output()
+        .map_err(|error| format!("Failed to execute git: {error}"))?;
+
+    if output.status.success() {
+        let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        return Ok(if value.is_empty() { None } else { Some(value) });
+    }
+
+    Ok(None)
+}
+
+fn infer_provider_type(host: &str) -> String {
+    let normalized = host.trim().to_ascii_lowercase();
+
+    if normalized.contains("github") {
+        return "github".to_string();
+    }
+    if normalized.contains("gitlab") {
+        return "gitlab".to_string();
+    }
+    if normalized.contains("bitbucket") {
+        return "bitbucket".to_string();
+    }
+    if normalized.contains("gitea") {
+        return "gitea".to_string();
+    }
+    if normalized.contains("azure") || normalized.contains("visualstudio") {
+        return "azure".to_string();
+    }
+
+    "other".to_string()
 }
 
 pub fn git_value(repository_path: &str, args: &[&str]) -> Result<Option<String>, String> {

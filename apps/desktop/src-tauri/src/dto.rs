@@ -396,6 +396,25 @@ pub struct LocalRepositoryInspectionDto {
     pub default_branch: Option<String>,
     pub git_user_name: Option<String>,
     pub git_user_email: Option<String>,
+    pub ssh_host_alias: Option<String>,
+    pub suggested_provider_type: Option<String>,
+    pub git_user_name_source: Option<String>,
+    pub git_user_email_source: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OrganizationIdentityImportDto {
+    pub repository_id: String,
+    pub repository_name: String,
+    pub provider_type: Option<String>,
+    pub provider_host: Option<String>,
+    pub ssh_host_alias: Option<String>,
+    pub git_user_name: Option<String>,
+    pub git_user_email: Option<String>,
+    pub remote_url: Option<String>,
+    pub default_branch: Option<String>,
+    pub sources: Vec<String>,
 }
 
 #[derive(Serialize)]

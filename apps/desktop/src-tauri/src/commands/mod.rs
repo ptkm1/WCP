@@ -14,8 +14,9 @@ pub use git::{
 };
 pub use history::{list_context_history, search_local_history};
 pub use organization::{
-    create_organization, create_project, list_organizations, list_projects, read_organization_logo,
-    remove_organization_logo, resolve_work_context, update_organization, update_organization_environment,
+    create_organization, create_project, import_organization_identity_from_repository,
+    list_organizations, list_projects, read_organization_logo, remove_organization_logo,
+    resolve_work_context, update_organization, update_organization_environment,
     update_organization_logo, update_project, update_repository_context,
 };
 pub use repository::{

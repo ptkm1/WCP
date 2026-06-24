@@ -44,6 +44,7 @@ import {
   ListTodo,
   Plus,
   Save,
+  ScanSearch,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
@@ -200,6 +201,23 @@ interface LocalRepositoryInspectionDto {
   defaultBranch?: string | null;
   gitUserName?: string | null;
   gitUserEmail?: string | null;
+  sshHostAlias?: string | null;
+  suggestedProviderType?: string | null;
+  gitUserNameSource?: string | null;
+  gitUserEmailSource?: string | null;
+}
+
+interface OrganizationIdentityImportDto {
+  repositoryId: string;
+  repositoryName: string;
+  providerType?: string | null;
+  providerHost?: string | null;
+  sshHostAlias?: string | null;
+  gitUserName?: string | null;
+  gitUserEmail?: string | null;
+  remoteUrl?: string | null;
+  defaultBranch?: string | null;
+  sources: string[];
 }
 
 interface CreateRepositoryResultDto {
@@ -972,6 +990,11 @@ export function App() {
   const [orgIdentityRepoId, setOrgIdentityRepoId] = useState<string | null>(
     null,
   );
+  const [orgIdentityImportRepoId, setOrgIdentityImportRepoId] = useState<
+    string | null
+  >(null);
+  const [orgIdentityImportPreview, setOrgIdentityImportPreview] =
+    useState<OrganizationIdentityImportDto | null>(null);
   const [orgIdentityGuardrail, setOrgIdentityGuardrail] =
     useState<RepositoryGuardrailDto | null>(null);
   const [orgIdentityBusy, setOrgIdentityBusy] = useState(false);
@@ -1055,7 +1078,27 @@ export function App() {
     const organization =
       organizations.find((org) => org.id === orgSetupSelectedId) ?? null;
     syncOrgEnvForm(organization);
-  }, [orgSetupSelectedId, organizations]);
+    setOrgIdentityImportPreview(null);
+
+    const importableRepos = repositories.filter(
+      (repository) =>
+        repository.organizationId === orgSetupSelectedId &&
+        repository.localPath?.trim(),
+    );
+
+    setOrgIdentityImportRepoId((current) => {
+      if (importableRepos.length === 0) {
+        return null;
+      }
+      if (
+        current &&
+        importableRepos.some((repository) => repository.id === current)
+      ) {
+        return current;
+      }
+      return importableRepos[0]?.id ?? null;
+    });
+  }, [orgSetupSelectedId, organizations, repositories]);
 
   useEffect(() => {
     if (activeView !== "repos" && activeView !== "organizations") {
@@ -2372,6 +2415,53 @@ export function App() {
     }
   }
 
+  function applyOrganizationIdentityImport(
+    identityImport: OrganizationIdentityImportDto,
+  ) {
+    if (identityImport.providerType) {
+      setOrgEnvProviderType(identityImport.providerType);
+    }
+    if (identityImport.providerHost) {
+      setOrgEnvProviderHost(identityImport.providerHost);
+    }
+    if (identityImport.sshHostAlias) {
+      setOrgEnvSshHostAlias(identityImport.sshHostAlias);
+    }
+    if (identityImport.gitUserName) {
+      setOrgEnvGitUserName(identityImport.gitUserName);
+    }
+    if (identityImport.gitUserEmail) {
+      setOrgEnvGitUserEmail(identityImport.gitUserEmail);
+    }
+  }
+
+  async function handleImportOrganizationIdentity() {
+    if (!orgSetupSelectedId || !orgIdentityImportRepoId) {
+      setOrgSetupError("Selecione um repositorio para importar a identidade.");
+      return;
+    }
+
+    try {
+      setOrgSetupBusy(true);
+      setOrgSetupError(null);
+      const identityImport = await invoke<OrganizationIdentityImportDto>(
+        "import_organization_identity_from_repository",
+        {
+          organizationId: orgSetupSelectedId,
+          repositoryId: orgIdentityImportRepoId,
+        },
+      );
+      applyOrganizationIdentityImport(identityImport);
+      setOrgIdentityImportPreview(identityImport);
+    } catch (importError) {
+      setOrgSetupError(
+        extractErrorMessage(importError, "Falha ao importar identidade Git"),
+      );
+    } finally {
+      setOrgSetupBusy(false);
+    }
+  }
+
   async function handleSaveOrganizationEnvironment() {
     if (!orgSetupSelectedId) {
       return;
@@ -3496,30 +3586,33 @@ export function App() {
                 const GroupIcon = getSearchKindIcon(group.kind);
 
                 return (
-                <div key={group.kind} className="searchGroup">
-                  <h3 className="searchGroupTitle inline-flex items-center gap-2">
-                    <GroupIcon className="h-4 w-4 text-muted-foreground" aria-hidden />
-                    {group.label}
-                  </h3>
-                  {group.items.map((item) => (
-                    <SearchResultButton
-                      key={`${item.kind}-${item.id}`}
-                      kind={item.kind}
-                      onClick={() => handleSearchResultClick(item)}
-                      title={item.title}
-                      detail={
-                        item.detail
-                          ? truncateSearchDetail(item.detail)
-                          : undefined
-                      }
-                      meta={`${normalizeSearchLabel(item.kind)}${
-                        item.createdAt
-                          ? ` · ${formatDateTime(item.createdAt)}`
-                          : ""
-                      }`}
-                    />
-                  ))}
-                </div>
+                  <div key={group.kind} className="searchGroup">
+                    <h3 className="searchGroupTitle inline-flex items-center gap-2">
+                      <GroupIcon
+                        className="h-4 w-4 text-muted-foreground"
+                        aria-hidden
+                      />
+                      {group.label}
+                    </h3>
+                    {group.items.map((item) => (
+                      <SearchResultButton
+                        key={`${item.kind}-${item.id}`}
+                        kind={item.kind}
+                        onClick={() => handleSearchResultClick(item)}
+                        title={item.title}
+                        detail={
+                          item.detail
+                            ? truncateSearchDetail(item.detail)
+                            : undefined
+                        }
+                        meta={`${normalizeSearchLabel(item.kind)}${
+                          item.createdAt
+                            ? ` · ${formatDateTime(item.createdAt)}`
+                            : ""
+                        }`}
+                      />
+                    ))}
+                  </div>
                 );
               })}
             </div>
@@ -4703,7 +4796,9 @@ export function App() {
                       )}
 
                       <div className="sessionForm compactForm">
-                        <SectionTitle icon={Image}>Logo da empresa</SectionTitle>
+                        <SectionTitle icon={Image}>
+                          Logo da empresa
+                        </SectionTitle>
                         <div className="orgLogoField">
                           <OrganizationAvatar
                             name={orgEditName || orgSetupOrganization.name}
@@ -4994,6 +5089,106 @@ export function App() {
 
                   {orgDetailTab === "identity" ? (
                     <div className="orgDetailSection">
+                      <div className="sessionForm compactForm orgIdentityImportPanel">
+                        <SectionTitle icon={ScanSearch}>
+                          Importar do repositorio
+                        </SectionTitle>
+                        <p className="muted">
+                          Preenche o perfil Git a partir de um repo vinculado.
+                          Revise os campos e clique em Salvar identidade.
+                        </p>
+
+                        {orgSetupRepositories.filter((repository) =>
+                          repository.localPath?.trim(),
+                        ).length === 0 ? (
+                          <StatusAlert
+                            status="warning"
+                            title="Nenhum repo inspecionavel"
+                          >
+                            Vincule um repositorio com pasta local na aba Repos
+                            antes de importar a identidade.
+                          </StatusAlert>
+                        ) : (
+                          <>
+                            {orgSetupGaps.length > 0 &&
+                            !orgIdentityImportPreview ? (
+                              <StatusAlert
+                                status="warning"
+                                title="Identidade incompleta"
+                              >
+                                Importe automaticamente de um repo vinculado
+                                para preencher user.name, host e alias SSH.
+                              </StatusAlert>
+                            ) : null}
+
+                            <label>
+                              Repositorio
+                              <select
+                                value={orgIdentityImportRepoId ?? ""}
+                                onChange={(event) => {
+                                  setOrgIdentityImportRepoId(
+                                    event.target.value || null,
+                                  );
+                                  setOrgIdentityImportPreview(null);
+                                }}
+                              >
+                                {orgSetupRepositories
+                                  .filter((repository) =>
+                                    repository.localPath?.trim(),
+                                  )
+                                  .map((repository) => (
+                                    <option
+                                      key={repository.id}
+                                      value={repository.id}
+                                    >
+                                      {repository.name}
+                                      {repository.localPath
+                                        ? ` · ${repository.localPath}`
+                                        : ""}
+                                    </option>
+                                  ))}
+                              </select>
+                            </label>
+
+                            <div className="actionRow">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                onClick={() =>
+                                  void handleImportOrganizationIdentity()
+                                }
+                                disabled={
+                                  orgSetupBusy || !orgIdentityImportRepoId
+                                }
+                              >
+                                <ScanSearch className="h-4 w-4" aria-hidden />
+                                Importar identidade
+                              </Button>
+                            </div>
+
+                            {orgIdentityImportPreview ? (
+                              <StatusAlert
+                                status="ok"
+                                title={`Importado de ${orgIdentityImportPreview.repositoryName}`}
+                              >
+                                <ul className="identityImportSources">
+                                  {orgIdentityImportPreview.sources.map(
+                                    (source) => (
+                                      <li key={source}>{source}</li>
+                                    ),
+                                  )}
+                                </ul>
+                                <p className="identityImportHint">
+                                  Campos preenchidos abaixo. Clique em{" "}
+                                  <strong>Salvar identidade</strong> para
+                                  persistir.
+                                </p>
+                              </StatusAlert>
+                            ) : null}
+                          </>
+                        )}
+                      </div>
+
                       <div className="orgIdentityGrid sessionForm compactForm">
                         <label>
                           Provider type

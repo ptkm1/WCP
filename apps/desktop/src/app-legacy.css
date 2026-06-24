@@ -394,6 +394,24 @@
   overflow-y: auto;
 }
 
+.orgIdentityImportPanel {
+  display: grid;
+  gap: 12px;
+}
+
+.identityImportSources {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  color: #d4d4d8;
+  font-size: 13px;
+}
+
+.identityImportHint {
+  margin: 10px 0 0;
+  font-size: 13px;
+  color: #a1a1aa;
+}
+
 .orgIdentityGrid {
   display: grid;
   gap: 10px;
