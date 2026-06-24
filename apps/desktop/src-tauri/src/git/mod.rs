@@ -1,6 +1,6 @@
 use crate::db::{escape_sql, get_optional_string, get_string, sqlite_exec, sqlite_json};
 use crate::dto::{
-    FixRepositoryRemoteResultDto, GitSnapshot, IdentityValidationDto,
+    ApplyFullContextResultDto, FixRepositoryRemoteResultDto, GitSnapshot, IdentityValidationDto,
     LocalRepositoryInspectionDto, OrganizationIdentityImportDto, RepositoryGuardrailDto,
     ValidationCheckDto,
 };
@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 mod ssh_config;
+pub use ssh_config::list_ssh_config_hosts;
 
 pub fn load_guardrail_for_repository(
     db_path: &Path,
@@ -435,6 +436,62 @@ pub fn rewrite_ssh_remote_host(remote_url: &str, new_ssh_alias: &str) -> Option<
     }
 
     Some(format!("git@{trimmed_alias}:{path}"))
+}
+
+pub fn apply_repository_identity_changes(
+    db_path: &Path,
+    repository_id: &str,
+) -> Result<Vec<String>, String> {
+    let guardrail = load_guardrail_for_repository(db_path, repository_id)?
+        .ok_or_else(|| "Repositorio nao encontrado".to_string())?;
+
+    let local_path = guardrail
+        .local_path
+        .clone()
+        .ok_or_else(|| "Repositorio sem caminho local configurado".to_string())?;
+
+    let mut applied_changes = Vec::new();
+
+    if let Some(user_name) = guardrail.expected_git_user_name.clone() {
+        run_git_config(&local_path, "user.name", &user_name)?;
+        applied_changes.push(format!("user.name={user_name}"));
+    }
+
+    if let Some(user_email) = guardrail.expected_git_user_email.clone() {
+        run_git_config(&local_path, "user.email", &user_email)?;
+        applied_changes.push(format!("user.email={user_email}"));
+    }
+
+    sqlite_exec(
+        db_path,
+        &format!(
+            "UPDATE repository_identities SET last_validated_at = datetime('now') WHERE repository_id = '{}';",
+            escape_sql(repository_id)
+        ),
+    )?;
+
+    Ok(applied_changes)
+}
+
+pub fn apply_repository_full_context(
+    db_path: &Path,
+    repository_id: &str,
+    ssh_host_alias: Option<&str>,
+) -> Result<ApplyFullContextResultDto, String> {
+    let identity_changes = apply_repository_identity_changes(db_path, repository_id)?;
+    let remote_result =
+        apply_repository_remote_ssh_alias(db_path, repository_id, ssh_host_alias)?;
+    let validation = load_guardrail_for_repository(db_path, repository_id)?
+        .and_then(|entry| entry.validation);
+
+    Ok(ApplyFullContextResultDto {
+        repository_id: repository_id.to_string(),
+        identity_changes,
+        remote_changed: remote_result.changed,
+        previous_remote_url: remote_result.previous_remote_url,
+        updated_remote_url: remote_result.updated_remote_url,
+        validation,
+    })
 }
 
 pub fn apply_repository_remote_ssh_alias(

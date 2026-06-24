@@ -40,6 +40,7 @@ import {
   GitBranch,
   History,
   Image,
+  Info,
   Link2,
   ListTodo,
   Plus,
@@ -225,6 +226,24 @@ interface FixRepositoryRemoteResultDto {
   previousRemoteUrl?: string | null;
   updatedRemoteUrl?: string | null;
   changed: boolean;
+}
+
+interface SshConfigHostEntryDto {
+  sectionLabel?: string | null;
+  hostAlias: string;
+  hostName?: string | null;
+  identityFile?: string | null;
+  lineStart: number;
+  lineEnd: number;
+}
+
+interface ApplyFullContextResultDto {
+  repositoryId: string;
+  identityChanges: string[];
+  remoteChanged: boolean;
+  previousRemoteUrl?: string | null;
+  updatedRemoteUrl?: string | null;
+  validation?: IdentityValidationDto | null;
 }
 
 interface CreateRepositoryResultDto {
@@ -1010,6 +1029,15 @@ export function App() {
   const [orgIdentityResult, setOrgIdentityResult] = useState<string | null>(
     null,
   );
+  const [orgIdentitySshInputMode, setOrgIdentitySshInputMode] = useState<
+    "selector" | "manual"
+  >("selector");
+  const [sshConfigHosts, setSshConfigHosts] = useState<SshConfigHostEntryDto[]>(
+    [],
+  );
+  const [sshConfigHostsLoading, setSshConfigHostsLoading] = useState(false);
+  const [orgIdentitySelectedSshHost, setOrgIdentitySelectedSshHost] =
+    useState("");
   const [newRepoProjectId, setNewRepoProjectId] = useState("");
   const [resolvedWorkContext, setResolvedWorkContext] =
     useState<ResolvedWorkContextDto | null>(null);
@@ -1127,6 +1155,64 @@ export function App() {
       return importableRepos[0]?.id ?? null;
     });
   }, [orgSetupSelectedId, repositories]);
+
+  useEffect(() => {
+    if (orgDetailTab !== "identity") {
+      return;
+    }
+
+    let cancelled = false;
+    setSshConfigHostsLoading(true);
+
+    invoke<SshConfigHostEntryDto[]>("list_ssh_config_hosts")
+      .then((hosts) => {
+        if (cancelled) {
+          return;
+        }
+        setSshConfigHosts(hosts);
+        if (hosts.length === 0) {
+          setOrgIdentitySshInputMode("manual");
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setSshConfigHosts([]);
+          setOrgIdentitySshInputMode("manual");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setSshConfigHostsLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [orgDetailTab, orgSetupSelectedId]);
+
+  useEffect(() => {
+    if (orgEnvFormDirty || sshConfigHosts.length === 0) {
+      return;
+    }
+
+    const savedAlias = orgEnvSshHostAlias.trim();
+    if (!savedAlias) {
+      setOrgIdentitySelectedSshHost("");
+      return;
+    }
+
+    const match = sshConfigHosts.find(
+      (entry) => entry.hostAlias === savedAlias,
+    );
+    if (match) {
+      setOrgIdentitySelectedSshHost(match.hostAlias);
+      setOrgIdentitySshInputMode("selector");
+      return;
+    }
+
+    setOrgIdentitySshInputMode("manual");
+  }, [orgEnvSshHostAlias, orgEnvFormDirty, sshConfigHosts]);
 
   useEffect(() => {
     if (activeView !== "repos" && activeView !== "organizations") {
@@ -2473,6 +2559,18 @@ export function App() {
     setOrgSetupSuccess(null);
   }
 
+  function applySshConfigHostEntry(entry: SshConfigHostEntryDto) {
+    markOrgEnvFormDirty();
+    setOrgIdentitySelectedSshHost(entry.hostAlias);
+    setOrgEnvSshHostAlias(entry.hostAlias);
+    if (entry.hostName) {
+      setOrgEnvProviderHost(entry.hostName);
+      if (!orgEnvProviderType.trim()) {
+        setOrgEnvProviderType(inferProviderTypeFromHost(entry.hostName));
+      }
+    }
+  }
+
   function applyOrganizationIdentityImport(
     identityImport: OrganizationIdentityImportDto,
   ) {
@@ -2770,6 +2868,65 @@ export function App() {
     } catch (fixError) {
       setOrgIdentityResult(
         extractErrorMessage(fixError, "Falha ao corrigir remoto"),
+      );
+    } finally {
+      setOrgIdentityBusy(false);
+    }
+  }
+
+  async function handleApplyFullRepositoryContext() {
+    if (!orgIdentityRepoId) {
+      return;
+    }
+
+    if (!orgIdentitySshAlias) {
+      setOrgIdentityResult(
+        "Configure o alias SSH no perfil antes de aplicar o contexto completo.",
+      );
+      return;
+    }
+
+    try {
+      setOrgIdentityBusy(true);
+      setOrgIdentityResult(null);
+
+      if (orgEnvFormDirty && orgSetupSelectedId) {
+        await handleSaveOrganizationEnvironment();
+      }
+
+      const response = await invoke<ApplyFullContextResultDto>(
+        "apply_repository_full_context",
+        {
+          repositoryId: orgIdentityRepoId,
+          sshHostAlias: orgIdentitySshAlias,
+        },
+      );
+
+      const parts: string[] = [];
+      if (response.identityChanges.length > 0) {
+        parts.push(`Identidade: ${response.identityChanges.join(", ")}`);
+      } else {
+        parts.push("Identidade: nenhuma alteracao necessaria");
+      }
+
+      if (response.remoteChanged) {
+        parts.push(
+          `Remoto: ${response.previousRemoteUrl ?? "?"} → ${response.updatedRemoteUrl ?? "?"}`,
+        );
+      } else {
+        parts.push("Remoto: ja estava correto");
+      }
+
+      setOrgIdentityResult(parts.join(" · "));
+      await reloadRepositories();
+      const guardrail = await invoke<RepositoryGuardrailDto | null>(
+        "get_repository_guardrail",
+        { repositoryId: orgIdentityRepoId },
+      );
+      setOrgIdentityGuardrail(guardrail);
+    } catch (applyError) {
+      setOrgIdentityResult(
+        extractErrorMessage(applyError, "Falha ao aplicar contexto completo"),
       );
     } finally {
       setOrgIdentityBusy(false);
@@ -5209,6 +5366,36 @@ export function App() {
 
                   {orgDetailTab === "identity" ? (
                     <div className="orgDetailSection">
+                      <div className="orgIdentityInfoCard">
+                        <SectionTitle icon={Info}>
+                          Como funciona o contexto Git
+                        </SectionTitle>
+                        <ul className="orgIdentityInfoList">
+                          <li>
+                            <strong>Salvar identidade</strong> grava o perfil da
+                            empresa no WCP (alias SSH, user.name, email). Nao
+                            altera o repo local.
+                          </li>
+                          <li>
+                            <strong>Aplicar identidade</strong> grava{" "}
+                            <code>user.name</code> e <code>user.email</code> no
+                            repo — autor dos commits. Nao muda o remoto SSH.
+                          </li>
+                          <li>
+                            <strong>Corrigir remoto</strong> altera{" "}
+                            <code>remote.origin.url</code> para usar o alias SSH
+                            do perfil (ex.:{" "}
+                            <code>git@github_gok:org/repo.git</code>). Define
+                            qual chave/conta autentica no push.
+                          </li>
+                          <li>
+                            <strong>Aplicar contexto completo</strong> faz
+                            identidade + remoto num passo. Autenticacao SSH e
+                            autor do commit sao camadas diferentes.
+                          </li>
+                        </ul>
+                      </div>
+
                       <div className="sessionForm compactForm orgIdentityImportPanel">
                         <SectionTitle icon={ScanSearch}>
                           Importar do repositorio
@@ -5340,20 +5527,108 @@ export function App() {
                         </label>
                         <label>
                           Alias SSH
-                          <input
-                            value={orgEnvSshHostAlias}
-                            onChange={(event) => {
-                              markOrgEnvFormDirty();
-                              setOrgEnvSshHostAlias(event.target.value);
-                            }}
-                            placeholder="github-ptkm1"
-                          />
-                          <span className="muted fieldHint">
-                            Host do ~/.ssh/config usado no remoto (ex.{" "}
-                            <code>git@github-ptkm1:org/repo.git</code>). O
-                            provider host acima continua sendo{" "}
-                            <code>github.com</code>.
-                          </span>
+                          {orgIdentitySshInputMode === "selector" ? (
+                            <div className="orgIdentitySshSelectorRow">
+                              <select
+                                value={orgIdentitySelectedSshHost}
+                                onChange={(event) => {
+                                  const entry = sshConfigHosts.find(
+                                    (host) =>
+                                      host.hostAlias === event.target.value,
+                                  );
+                                  if (entry) {
+                                    applySshConfigHostEntry(entry);
+                                  }
+                                }}
+                                disabled={
+                                  sshConfigHostsLoading ||
+                                  sshConfigHosts.length === 0
+                                }
+                              >
+                                <option value="">
+                                  {sshConfigHostsLoading
+                                    ? "Carregando ~/.ssh/config..."
+                                    : "Selecione um host SSH"}
+                                </option>
+                                {Array.from(
+                                  groupSshConfigHostsBySection(sshConfigHosts),
+                                ).map(([sectionLabel, hosts]) => (
+                                  <optgroup
+                                    key={sectionLabel}
+                                    label={sectionLabel}
+                                  >
+                                    {hosts.map((entry) => (
+                                      <option
+                                        key={entry.hostAlias}
+                                        value={entry.hostAlias}
+                                      >
+                                        {formatSshConfigHostOptionLabel(entry)}
+                                      </option>
+                                    ))}
+                                  </optgroup>
+                                ))}
+                              </select>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                onClick={() =>
+                                  setOrgIdentitySshInputMode("manual")
+                                }
+                              >
+                                Digitar manualmente
+                              </Button>
+                            </div>
+                          ) : (
+                            <div className="orgIdentitySshSelectorRow">
+                              <input
+                                value={orgEnvSshHostAlias}
+                                onChange={(event) => {
+                                  markOrgEnvFormDirty();
+                                  setOrgEnvSshHostAlias(event.target.value);
+                                  setOrgIdentitySelectedSshHost("");
+                                }}
+                                placeholder="github_gok"
+                              />
+                              {sshConfigHosts.length > 0 ? (
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  onClick={() => {
+                                    setOrgIdentitySshInputMode("selector");
+                                    const match = sshConfigHosts.find(
+                                      (entry) =>
+                                        entry.hostAlias ===
+                                        orgEnvSshHostAlias.trim(),
+                                    );
+                                    if (match) {
+                                      setOrgIdentitySelectedSshHost(
+                                        match.hostAlias,
+                                      );
+                                    }
+                                  }}
+                                >
+                                  Usar seletor SSH
+                                </Button>
+                              ) : null}
+                            </div>
+                          )}
+                          {sshConfigHosts.length === 0 &&
+                          !sshConfigHostsLoading ? (
+                            <span className="muted fieldHint">
+                              Nenhum host encontrado em{" "}
+                              <code>~/.ssh/config</code>. Use comentarios{" "}
+                              <code># GitHub gok</code> acima de cada bloco{" "}
+                              <code>Host</code> para rotular o seletor.
+                            </span>
+                          ) : (
+                            <span className="muted fieldHint">
+                              Host do <code>~/.ssh/config</code> usado no remoto
+                              (ex. <code>git@github_gok:org/repo.git</code>). O
+                              provider host acima continua sendo o{" "}
+                              <code>HostName</code> (ex. <code>github.com</code>
+                              ).
+                            </span>
+                          )}
                         </label>
                         <label>
                           Git user.name
@@ -5510,6 +5785,20 @@ export function App() {
                           </StatusAlert>
                         ) : null}
                         <div className="actionRow">
+                          <Button
+                            type="button"
+                            onClick={() =>
+                              void handleApplyFullRepositoryContext()
+                            }
+                            disabled={
+                              orgIdentityBusy ||
+                              !orgIdentityRepoId ||
+                              !orgIdentitySshAlias
+                            }
+                          >
+                            <ArrowRightLeft className="h-4 w-4" aria-hidden />
+                            Aplicar contexto completo
+                          </Button>
                           <Button
                             type="button"
                             variant="outline"
@@ -7135,6 +7424,50 @@ function formatTaskStatus(status: string): string {
     default:
       return status.replace(/_/g, " ");
   }
+}
+
+function inferProviderTypeFromHost(host: string): string {
+  const normalized = host.trim().toLowerCase();
+  if (normalized.includes("github")) {
+    return "github";
+  }
+  if (normalized.includes("gitlab")) {
+    return "gitlab";
+  }
+  if (normalized.includes("bitbucket")) {
+    return "bitbucket";
+  }
+  if (
+    normalized.includes("dev.azure.com") ||
+    normalized.includes("visualstudio.com")
+  ) {
+    return "azure";
+  }
+  return "other";
+}
+
+function formatSshConfigHostOptionLabel(entry: SshConfigHostEntryDto): string {
+  const hostName = entry.hostName ?? entry.hostAlias;
+  const lineRef =
+    entry.lineStart > 0
+      ? ` · L${entry.lineStart}${entry.lineEnd > entry.lineStart ? `–${entry.lineEnd}` : ""}`
+      : "";
+  return `${entry.hostAlias} → ${hostName}${lineRef}`;
+}
+
+function groupSshConfigHostsBySection(
+  hosts: SshConfigHostEntryDto[],
+): Array<[string, SshConfigHostEntryDto[]]> {
+  const groups = new Map<string, SshConfigHostEntryDto[]>();
+
+  for (const entry of hosts) {
+    const label = entry.sectionLabel?.trim() || "Outros hosts";
+    const current = groups.get(label) ?? [];
+    current.push(entry);
+    groups.set(label, current);
+  }
+
+  return Array.from(groups.entries());
 }
 
 function parseSshRemoteHostAlias(remoteUrl: string): string | null {

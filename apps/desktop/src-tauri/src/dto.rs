@@ -428,6 +428,28 @@ pub struct FixRepositoryRemoteResultDto {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct SshConfigHostEntryDto {
+    pub section_label: Option<String>,
+    pub host_alias: String,
+    pub host_name: Option<String>,
+    pub identity_file: Option<String>,
+    pub line_start: u32,
+    pub line_end: u32,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApplyFullContextResultDto {
+    pub repository_id: String,
+    pub identity_changes: Vec<String>,
+    pub remote_changed: bool,
+    pub previous_remote_url: Option<String>,
+    pub updated_remote_url: Option<String>,
+    pub validation: Option<IdentityValidationDto>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CreateRepositoryResultDto {
     pub repository: RepositoryListItemDto,
 }

@@ -9,16 +9,16 @@ mod hooks;
 mod util;
 
 use commands::{
-    apply_repository_identity, attach_task_artifact, create_organization, create_project,
-    create_repository, create_work_item, create_work_item_dependency, delete_work_item_dependency,
-    duplicate_work_item, end_session, fix_repository_remote_ssh_alias, get_repository_guardrail, get_repository_hook_status,
-    get_repository_memory, get_task_context, inspect_local_repository_path,
-    install_repository_pre_push_hook, list_context_history, list_organizations, list_projects,
-    import_organization_identity_from_repository,
-    list_repositories, load_dashboard_data, pick_local_folder, remove_repository_pre_push_hook,
+    apply_repository_full_context, apply_repository_identity, attach_task_artifact,
+    create_organization, create_project, create_repository, create_work_item,
+    create_work_item_dependency, delete_work_item_dependency, duplicate_work_item, end_session,
+    fix_repository_remote_ssh_alias, get_repository_guardrail, get_repository_hook_status,
+    get_repository_memory, get_task_context, import_organization_identity_from_repository,
+    inspect_local_repository_path, install_repository_pre_push_hook, list_context_history,
+    list_organizations, list_projects, list_repositories, list_ssh_config_hosts, load_dashboard_data,
+    pick_local_folder, read_organization_logo, remove_organization_logo, remove_repository_pre_push_hook,
     resolve_work_context, save_repository_note, save_task_note, search_local_history, start_session,
     update_organization, update_organization_environment, update_organization_logo, update_project,
-    remove_organization_logo, read_organization_logo,
     update_repository_context, update_repository_local_path, update_work_item,
 };
 
@@ -52,6 +52,7 @@ fn main() {
             duplicate_work_item,
             list_projects,
             apply_repository_identity,
+            apply_repository_full_context,
             fix_repository_remote_ssh_alias,
             install_repository_pre_push_hook,
             get_repository_hook_status,
@@ -64,7 +65,8 @@ fn main() {
             create_work_item_dependency,
             delete_work_item_dependency,
             search_local_history,
-            list_context_history
+            list_context_history,
+            list_ssh_config_hosts
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

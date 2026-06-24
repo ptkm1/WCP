@@ -1,12 +1,12 @@
-use crate::db::{
-    ensure_db_ready, escape_sql, fetch_repository_by_id, resolve_db_path, sqlite_exec,
-};
+use crate::db::{ensure_db_ready, fetch_repository_by_id, resolve_db_path};
 use crate::dto::{
-    ApplyIdentityResultDto, FixRepositoryRemoteResultDto, InstallPrePushHookResultDto,
-    RemovePrePushHookResultDto, RepositoryHookStatusDto,
+    ApplyFullContextResultDto, ApplyIdentityResultDto, FixRepositoryRemoteResultDto,
+    InstallPrePushHookResultDto, RemovePrePushHookResultDto, RepositoryHookStatusDto,
 };
 use crate::git::{
-    apply_repository_remote_ssh_alias, load_guardrail_for_repository, run_git_config,
+    apply_repository_full_context as apply_full_context_to_repo,
+    apply_repository_identity_changes, apply_repository_remote_ssh_alias,
+    load_guardrail_for_repository,
 };
 use crate::hooks::{
     install_pre_push_hook, read_pre_push_hook_status, remove_managed_pre_push_hook,
@@ -16,34 +16,8 @@ use crate::hooks::{
 pub fn apply_repository_identity(repository_id: String) -> Result<ApplyIdentityResultDto, String> {
     let db_path = resolve_db_path()?;
     ensure_db_ready(&db_path)?;
-    let guardrail = load_guardrail_for_repository(&db_path, &repository_id)?
-        .ok_or_else(|| "Repositorio nao encontrado".to_string())?;
 
-    let local_path = guardrail
-        .local_path
-        .clone()
-        .ok_or_else(|| "Repositorio sem caminho local configurado".to_string())?;
-
-    let mut applied_changes = Vec::new();
-
-    if let Some(user_name) = guardrail.expected_git_user_name.clone() {
-        run_git_config(&local_path, "user.name", &user_name)?;
-        applied_changes.push(format!("user.name={user_name}"));
-    }
-
-    if let Some(user_email) = guardrail.expected_git_user_email.clone() {
-        run_git_config(&local_path, "user.email", &user_email)?;
-        applied_changes.push(format!("user.email={user_email}"));
-    }
-
-    sqlite_exec(
-        &db_path,
-        &format!(
-            "UPDATE repository_identities SET last_validated_at = datetime('now') WHERE repository_id = '{}';",
-            escape_sql(&repository_id)
-        ),
-    )?;
-
+    let applied_changes = apply_repository_identity_changes(&db_path, &repository_id)?;
     let refreshed = load_guardrail_for_repository(&db_path, &repository_id)?;
 
     Ok(ApplyIdentityResultDto {
@@ -51,6 +25,29 @@ pub fn apply_repository_identity(repository_id: String) -> Result<ApplyIdentityR
         applied_changes,
         validation: refreshed.and_then(|entry| entry.validation),
     })
+}
+
+#[tauri::command]
+pub fn apply_repository_full_context(
+    repository_id: String,
+    ssh_host_alias: Option<String>,
+) -> Result<ApplyFullContextResultDto, String> {
+    let db_path = resolve_db_path()?;
+    ensure_db_ready(&db_path)?;
+
+    if repository_id.trim().is_empty() {
+        return Err("Repositorio invalido".to_string());
+    }
+
+    let resolved_alias = ssh_host_alias
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+
+    apply_full_context_to_repo(
+        &db_path,
+        repository_id.trim(),
+        resolved_alias.as_deref(),
+    )
 }
 
 #[tauri::command]

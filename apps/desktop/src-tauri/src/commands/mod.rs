@@ -4,14 +4,16 @@ mod git;
 mod history;
 mod organization;
 mod repository;
+mod ssh;
 mod task;
 
 pub use dashboard::load_dashboard_data;
 pub use dialog::pick_local_folder;
 pub use git::{
-    apply_repository_identity, fix_repository_remote_ssh_alias, get_repository_hook_status,
-    install_repository_pre_push_hook, remove_repository_pre_push_hook,
+    apply_repository_full_context, apply_repository_identity, fix_repository_remote_ssh_alias,
+    get_repository_hook_status, install_repository_pre_push_hook, remove_repository_pre_push_hook,
 };
+pub use ssh::list_ssh_config_hosts;
 pub use history::{list_context_history, search_local_history};
 pub use organization::{
     create_organization, create_project, import_organization_identity_from_repository,
