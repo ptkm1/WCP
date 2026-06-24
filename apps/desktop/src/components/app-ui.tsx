@@ -1,10 +1,24 @@
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  CONTEXT_STEP_ICONS,
+  getHistoryKindIcon,
+  getSearchKindIcon,
+  MAIN_VIEW_ICONS,
+  type MainView,
+} from "@/lib/app-icons";
 import { cn } from "@/lib/utils";
-import { AlertTriangle, CheckCircle2, type LucideIcon } from "lucide-react";
-import type { ReactNode } from "react";
+import {
+  AlertTriangle,
+  Check,
+  CheckCircle2,
+  Search,
+  type LucideIcon,
+} from "lucide-react";
+import type { ComponentProps, ReactNode } from "react";
 
 export type StatusKind = "ok" | "warning" | "mismatch" | string;
 
@@ -86,6 +100,70 @@ export function PlanStatusBadge({
   );
 }
 
+export function SectionTitle({
+  icon: Icon,
+  children,
+  className,
+}: {
+  icon?: LucideIcon;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <p
+      className={cn(
+        "backlogSidebarTitle inline-flex items-center gap-2",
+        className,
+      )}
+    >
+      {Icon ? (
+        <Icon className="h-4 w-4 shrink-0 text-primary/75" aria-hidden />
+      ) : null}
+      <span>{children}</span>
+    </p>
+  );
+}
+
+export function SearchField({
+  wrapperClassName,
+  className,
+  ...props
+}: ComponentProps<"input"> & { wrapperClassName?: string }) {
+  return (
+    <div className={cn("relative", wrapperClassName)}>
+      <Search
+        className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
+        aria-hidden
+      />
+      <Input {...props} className={cn("globalSearchInput pl-9", className)} />
+    </div>
+  );
+}
+
+export function PageHeader({
+  view,
+  title,
+  hint,
+}: {
+  view: MainView;
+  title: string;
+  hint: string;
+}) {
+  const Icon = MAIN_VIEW_ICONS[view];
+
+  return (
+    <header className="pageHeader mb-5">
+      <h1 className="mb-1.5 flex items-center gap-3 text-3xl font-semibold tracking-tight">
+        <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-primary/20 bg-primary/10 text-primary">
+          <Icon className="h-5 w-5" aria-hidden />
+        </span>
+        {title}
+      </h1>
+      <p className="text-sm leading-relaxed text-muted-foreground">{hint}</p>
+    </header>
+  );
+}
+
 export function FilterTabs<T extends string>({
   value,
   onValueChange,
@@ -95,7 +173,7 @@ export function FilterTabs<T extends string>({
 }: {
   value: T;
   onValueChange: (value: T) => void;
-  items: Array<{ id: T; label: string }>;
+  items: Array<{ id: T; label: string; icon?: LucideIcon }>;
   className?: string;
   "aria-label"?: string;
 }) {
@@ -109,22 +187,30 @@ export function FilterTabs<T extends string>({
           )}
           aria-label={ariaLabel}
         >
-          {items.map((item) => (
-            <TabsTrigger
-              key={item.id}
-              value={item.id}
-              className="shrink-0 whitespace-nowrap rounded-lg border border-transparent px-3 py-1.5 text-xs sm:px-3.5 sm:py-2 sm:text-sm data-[state=active]:border-primary/45 data-[state=active]:bg-primary/15 data-[state=active]:text-primary data-[state=active]:shadow-glow"
-            >
-              {item.label}
-            </TabsTrigger>
-          ))}
+          {items.map((item) => {
+            const Icon = item.icon;
+
+            return (
+              <TabsTrigger
+                key={item.id}
+                value={item.id}
+                className="shrink-0 gap-1.5 whitespace-nowrap rounded-lg border border-transparent px-3 py-1.5 text-xs sm:px-3.5 sm:py-2 sm:text-sm data-[state=active]:border-primary/45 data-[state=active]:bg-primary/15 data-[state=active]:text-primary data-[state=active]:shadow-glow"
+              >
+                {Icon ? (
+                  <Icon
+                    className="h-3.5 w-3.5 shrink-0 opacity-80"
+                    aria-hidden
+                  />
+                ) : null}
+                {item.label}
+              </TabsTrigger>
+            );
+          })}
         </TabsList>
       </div>
     </Tabs>
   );
 }
-
-type MainView = "today" | "backlog" | "repos" | "history";
 
 export function MainViewTabs({
   value,
@@ -136,6 +222,7 @@ export function MainViewTabs({
   const items: Array<[MainView, string, string]> = [
     ["today", "Hoje", "Resumo e foco"],
     ["backlog", "Tarefas", "Historico e contexto"],
+    ["organizations", "Empresa", "Cadastro e contexto"],
     ["repos", "Projetos", "Git e ambiente"],
     ["history", "Historico", "Retomada transversal"],
   ];
@@ -145,20 +232,79 @@ export function MainViewTabs({
       value={value}
       onValueChange={(next) => onValueChange(next as MainView)}
     >
-      <TabsList className="grid h-auto w-full grid-cols-1 gap-2 bg-transparent p-0 sm:grid-cols-2 lg:grid-cols-4">
-        {items.map(([view, label, hint]) => (
-          <TabsTrigger
-            key={view}
-            value={view}
-            className="h-auto flex-col items-start rounded-2xl border border-border bg-card/60 px-3.5 py-3 text-left data-[state=active]:border-primary/45 data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-glow"
-          >
-            <span className="block text-[15px] font-semibold">{label}</span>
-            <span className="block text-xs opacity-80">{hint}</span>
-          </TabsTrigger>
-        ))}
+      <TabsList className="grid h-auto w-full grid-cols-1 gap-2 bg-transparent p-0 sm:grid-cols-2 lg:grid-cols-5">
+        {items.map(([view, label, hint]) => {
+          const Icon = MAIN_VIEW_ICONS[view];
+
+          return (
+            <TabsTrigger
+              key={view}
+              value={view}
+              className="h-auto flex-col items-start rounded-2xl border border-border bg-card/60 px-3.5 py-3 text-left data-[state=active]:border-primary/45 data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-glow"
+            >
+              <span className="mb-1 flex items-center gap-2">
+                <Icon className="h-4 w-4 shrink-0 opacity-80" aria-hidden />
+                <span className="block text-[15px] font-semibold">{label}</span>
+              </span>
+              <span className="block pl-6 text-xs opacity-80">{hint}</span>
+            </TabsTrigger>
+          );
+        })}
       </TabsList>
     </Tabs>
   );
+}
+
+export function OrganizationAvatar({
+  name,
+  kind,
+  logoUrl,
+  size = "md",
+  className,
+}: {
+  name: string;
+  kind?: string | null;
+  logoUrl?: string | null;
+  size?: "sm" | "md" | "lg";
+  className?: string;
+}) {
+  const initials = buildOrganizationInitials(name);
+  const sizeClass =
+    size === "sm"
+      ? "orgAvatar-sm"
+      : size === "lg"
+        ? "orgAvatar-lg"
+        : "orgAvatar-md";
+
+  return (
+    <span
+      className={cn(
+        "orgAvatar",
+        sizeClass,
+        `orgAvatar-${kind ?? "company"}`,
+        className,
+      )}
+      aria-hidden={logoUrl ? undefined : true}
+      title={name}
+    >
+      {logoUrl ? (
+        <img src={logoUrl} alt="" className="orgAvatarImage" />
+      ) : (
+        <span className="orgAvatarFallback">{initials}</span>
+      )}
+    </span>
+  );
+}
+
+function buildOrganizationInitials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) {
+    return "?";
+  }
+  if (parts.length === 1) {
+    return parts[0].slice(0, 2).toUpperCase();
+  }
+  return `${parts[0][0] ?? ""}${parts[1][0] ?? ""}`.toUpperCase();
 }
 
 export function SelectableListItem({
@@ -167,6 +313,7 @@ export function SelectableListItem({
   onClick,
   title,
   subtitle,
+  leading,
   children,
 }: {
   active?: boolean;
@@ -174,6 +321,7 @@ export function SelectableListItem({
   onClick: () => void;
   title: ReactNode;
   subtitle?: ReactNode;
+  leading?: ReactNode;
   children?: ReactNode;
 }) {
   return (
@@ -188,14 +336,20 @@ export function SelectableListItem({
       )}
       onClick={onClick}
     >
-      <span className="min-w-0 font-semibold text-foreground">{title}</span>
-      {subtitle ? (
-        <span className="min-w-0 line-clamp-2 text-xs text-muted-foreground">
-          {subtitle}
-        </span>
-      ) : null}
+      <div className="flex min-w-0 w-full items-start gap-3">
+        {leading}
+        <div className="min-w-0 flex-1">
+          <span className="min-w-0 font-semibold text-foreground">{title}</span>
+          {subtitle ? (
+            <span className="mt-1 block min-w-0 line-clamp-2 text-xs text-muted-foreground">
+              {subtitle}
+            </span>
+          ) : null}
+        </div>
+      </div>
       {children ? (
-        <div className="flex min-w-0 w-full flex-wrap items-center gap-2 text-xs text-muted-foreground">
+        <div className="flex min-w-0 w-full flex-wrap items-center gap-2 pl-0 text-xs text-muted-foreground">
+          {leading ? <span className="orgAvatar-spacer" aria-hidden /> : null}
           {children}
         </div>
       ) : null}
@@ -229,6 +383,8 @@ export function HistoryEventButton({
   detail?: ReactNode;
   context?: ReactNode;
 }) {
+  const KindIcon = getHistoryKindIcon(kind);
+
   return (
     <Button
       type="button"
@@ -241,7 +397,13 @@ export function HistoryEventButton({
       onClick={onClick}
     >
       <span className="text-xs text-muted-foreground">{meta}</span>
-      <span className="font-semibold text-foreground">{title}</span>
+      <span className="flex items-start gap-2 font-semibold text-foreground">
+        <KindIcon
+          className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground"
+          aria-hidden
+        />
+        <span className="min-w-0">{title}</span>
+      </span>
       {detail ? (
         <span className="text-sm text-muted-foreground">{detail}</span>
       ) : null}
@@ -253,16 +415,20 @@ export function HistoryEventButton({
 }
 
 export function SearchResultButton({
+  kind,
   onClick,
   title,
   detail,
   meta,
 }: {
+  kind?: string;
   onClick: () => void;
   title: ReactNode;
   detail?: ReactNode;
   meta: ReactNode;
 }) {
+  const KindIcon = kind ? getSearchKindIcon(kind) : null;
+
   return (
     <Button
       type="button"
@@ -271,7 +437,15 @@ export function SearchResultButton({
       className="h-auto w-full flex-col items-start gap-1 rounded-xl px-3 py-2.5 text-left font-normal hover:bg-accent/60"
       onClick={onClick}
     >
-      <span className="font-semibold text-foreground">{title}</span>
+      <span className="flex items-start gap-2 font-semibold text-foreground">
+        {KindIcon ? (
+          <KindIcon
+            className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground"
+            aria-hidden
+          />
+        ) : null}
+        <span className="min-w-0">{title}</span>
+      </span>
       {detail ? (
         <span className="text-sm text-muted-foreground">{detail}</span>
       ) : null}
@@ -300,6 +474,7 @@ export function ContextStepsBar({
       {steps.map(({ step, label }) => {
         const done = completedSteps.has(step);
         const active = currentStep === step;
+        const StepIcon = CONTEXT_STEP_ICONS[step];
 
         return (
           <Button
@@ -312,11 +487,32 @@ export function ContextStepsBar({
             onClick={() => onStepClick(step)}
           >
             <Badge
-              variant={done ? "success" : active ? "default" : "outline"}
-              className="h-5 min-w-5 justify-center rounded-full px-1.5"
+              variant="outline"
+              className={cn(
+                "h-5 min-w-5 justify-center rounded-full px-1.5",
+                active &&
+                  "border-transparent bg-background text-primary shadow-none",
+                done &&
+                  !active &&
+                  "border-transparent bg-primary/15 text-primary shadow-none",
+                !done &&
+                  !active &&
+                  "border-border bg-transparent text-muted-foreground",
+              )}
             >
-              {done ? "✓" : step}
+              {done ? <Check className="h-3 w-3" aria-hidden /> : step}
             </Badge>
+            {StepIcon ? (
+              <StepIcon
+                className={cn(
+                  "h-3.5 w-3.5 shrink-0",
+                  active
+                    ? "text-primary-foreground"
+                    : "text-current opacity-80",
+                )}
+                aria-hidden
+              />
+            ) : null}
             {label}
           </Button>
         );
@@ -357,11 +553,17 @@ export function TimelineEntry({
   detail: ReactNode;
   when: ReactNode;
 }) {
+  const KindIcon = getHistoryKindIcon(kind);
+
   return (
     <li className="flex items-start justify-between gap-4 rounded-xl border border-border bg-card/40 px-4 py-3">
       <div className="grid gap-1">
         <div className="flex flex-wrap items-center gap-2">
-          <Badge variant={TIMELINE_KIND_VARIANT[kind] ?? "outline"}>
+          <Badge
+            variant={TIMELINE_KIND_VARIANT[kind] ?? "outline"}
+            className="gap-1"
+          >
+            <KindIcon className="h-3 w-3" aria-hidden />
             {TIMELINE_KIND_LABEL[kind] ?? kind}
           </Badge>
           <strong className="text-sm">{title}</strong>

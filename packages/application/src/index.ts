@@ -11,6 +11,9 @@ import type {
   WorkItem,
   WorkItemDependency,
 } from "@wcp/domain";
+import { resolveEffectiveGitIdentity } from "@wcp/domain";
+
+export { resolveEffectiveGitIdentity } from "@wcp/domain";
 
 export interface TodaySummary {
   executableCount: number;
@@ -173,27 +176,6 @@ function coalesceString(
     }
   }
   return null;
-}
-
-export function resolveEffectiveGitIdentity(
-  identity: RepositoryIdentity | null | undefined,
-  profile: EnvironmentProfile | null | undefined,
-  repository?: Repository | null,
-): EffectiveGitIdentity {
-  return {
-    environmentProfileId: identity?.environmentProfileId ?? profile?.id ?? null,
-    environmentName: profile?.name ?? null,
-    providerHost: coalesceString(
-      profile?.providerHost,
-      repository?.providerHost,
-    ),
-    gitUserName: coalesceString(identity?.gitUserName, profile?.gitUserName),
-    gitUserEmail: coalesceString(identity?.gitUserEmail, profile?.gitUserEmail),
-    sshHostAlias: coalesceString(identity?.sshHostAlias, profile?.sshHostAlias),
-    branchPattern: profile?.branchPattern ?? null,
-    providerUsername: coalesceString(identity?.providerUsername),
-    providerAccountLabel: coalesceString(identity?.providerAccountLabel),
-  };
 }
 
 export function resolveExecutionContext(

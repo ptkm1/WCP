@@ -14,9 +14,14 @@ use std::path::Path;
 
 mod context;
 mod context_links;
+mod context_resolve;
 
 pub use context::resolve_repository_id_for_focus;
-pub use context_links::validate_work_item_context;
+pub use context_links::{
+    validate_repository_assignment, validate_work_context_links, validate_work_item_context,
+    WorkContextLinksInput,
+};
+pub use context_resolve::resolve_work_context;
 
 pub fn load_task_context(db_path: &Path, work_item_id: &str) -> Result<TaskContextDto, String> {
     let backlog = fetch_work_items(db_path)?;

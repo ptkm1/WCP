@@ -42,12 +42,14 @@ pub struct WorkItemDto {
     pub updated_at: String,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectListItemDto {
     pub id: String,
     pub name: String,
     pub organization_id: Option<String>,
+    pub description: Option<String>,
+    pub is_active: bool,
 }
 
 #[derive(Serialize)]
@@ -123,6 +125,7 @@ pub struct RepositoryGuardrailDto {
     pub provider_username: Option<String>,
     pub provider_account_label: Option<String>,
     pub validation: Option<IdentityValidationDto>,
+    pub chain_label: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -152,18 +155,82 @@ pub struct TaskContextDto {
     pub dependencies: Vec<TaskDependencyDto>,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OrganizationListItemDto {
     pub id: String,
     pub name: String,
+    pub kind: String,
+    pub is_active: bool,
+    pub logo_path: Option<String>,
     pub environment_profile_id: Option<String>,
     pub environment_name: Option<String>,
+    pub provider_type: Option<String>,
     pub provider_host: Option<String>,
     pub ssh_host_alias: Option<String>,
     pub git_user_name: Option<String>,
     pub git_user_email: Option<String>,
     pub branch_pattern: Option<String>,
+    pub pr_convention: Option<String>,
+    pub commit_convention: Option<String>,
+    pub notes_json: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateOrganizationResultDto {
+    pub organization: OrganizationListItemDto,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateOrganizationResultDto {
+    pub organization: OrganizationListItemDto,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateOrganizationEnvironmentResultDto {
+    pub organization: OrganizationListItemDto,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateProjectResultDto {
+    pub project: ProjectListItemDto,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateProjectResultDto {
+    pub project: ProjectListItemDto,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateRepositoryContextResultDto {
+    pub repository: RepositoryListItemDto,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResolvedWorkContextDto {
+    pub organization_id: Option<String>,
+    pub organization_name: Option<String>,
+    pub project_id: Option<String>,
+    pub project_name: Option<String>,
+    pub repository_id: Option<String>,
+    pub repository_name: Option<String>,
+    pub environment_profile_id: Option<String>,
+    pub environment_name: Option<String>,
+    pub identity_source: Option<String>,
+    pub expected_git_user_name: Option<String>,
+    pub expected_git_user_email: Option<String>,
+    pub provider_host: Option<String>,
+    pub branch_pattern: Option<String>,
+    pub chain_label: Option<String>,
+    pub gaps: Vec<String>,
+    pub inferred_organization_from: Option<String>,
 }
 
 #[derive(Serialize)]

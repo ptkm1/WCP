@@ -8,6 +8,7 @@ use crate::dto::{
     RepositoryMemoryDto, SaveNoteResultDto, UpdateRepositoryResultDto,
 };
 use crate::git::inspect_local_repository;
+use crate::domain::validate_repository_assignment;
 use crate::util::{iso_now, unix_timestamp_millis};
 
 #[tauri::command]
@@ -47,24 +48,11 @@ pub fn create_repository(
     }
 
     let resolved_project_id = resolve_optional_string(project_id);
-    if let Some(project_id) = resolved_project_id.as_deref() {
-        let project_rows = sqlite_json(
-            &db_path,
-            &format!(
-                "SELECT organization_id FROM projects WHERE id = '{}' AND is_active = 1 LIMIT 1;",
-                escape_sql(project_id)
-            ),
-        )?;
-        let Some(project_row) = project_rows.first() else {
-            return Err("Projeto nao encontrado".to_string());
-        };
-        let project_org = get_optional_string(project_row, "organization_id");
-        if let Some(project_org) = project_org {
-            if project_org != organization_id {
-                return Err("Projeto pertence a outra empresa".to_string());
-            }
-        }
-    }
+    validate_repository_assignment(
+        &db_path,
+        organization_id.trim(),
+        resolved_project_id.as_deref(),
+    )?;
 
     let org_rows = sqlite_json(
         &db_path,

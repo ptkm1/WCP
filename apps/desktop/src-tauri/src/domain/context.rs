@@ -43,6 +43,8 @@ pub fn resolve_repository_id_for_focus(
                     escape_sql(organization_id)
                 ),
             )?;
+            // Heuristica de candidato unico: quando ha exatamente um repo ativo na org,
+            // inferimos o foco sem ramificacao especial monoempresa vs multiempresa.
             if rows.len() == 1 {
                 return Ok(get_optional_string(rows.first().unwrap(), "id"));
             }

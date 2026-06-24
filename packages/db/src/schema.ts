@@ -10,7 +10,11 @@
  *
  * work_items link optionally to organization, project, and primary_repository_id.
  *
- * Consistency rules enforced in app logic:
+ * Product questions answered by FKs:
+ * - organization_id on projects/repositories/work_items → qual empresa
+ * - project_id on repositories/work_items → qual projeto agrupa o repo/tarefa
+ * - repository_identities.environment_profile_id → qual perfil Git da empresa
+ * - repository_identities overrides → identidade Git efetiva por repo
  * - project.organizationId must match work_item.organizationId when both set
  * - repository.organizationId must match work_item.organizationId when both set
  * - repository.projectId may be null or must match work_item.projectId when both set
@@ -49,6 +53,8 @@ export const organizations = sqliteTable("organizations", {
     .references(() => workspaces.id),
   name: text("name").notNull(),
   kind: text("kind").notNull(),
+  /** Absolute path to logo file in app storage (not a remote URL). */
+  logoPath: text("logo_path"),
   isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
   ...timestamps,
 });

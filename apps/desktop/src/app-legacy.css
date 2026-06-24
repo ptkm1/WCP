@@ -354,6 +354,189 @@
   background: rgba(34, 197, 94, 0.08);
 }
 
+.orgPanel {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.orgLayout {
+  display: grid;
+  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+  gap: 18px;
+  min-width: 0;
+}
+
+.orgLayout > * {
+  min-width: 0;
+}
+
+.orgSidebar {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+  min-width: 0;
+}
+
+.orgDetail {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+.orgDetailSection {
+  display: grid;
+  gap: 16px;
+}
+
+.orgOrgList {
+  max-height: min(60vh, 520px);
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.orgIdentityGrid {
+  display: grid;
+  gap: 10px;
+}
+
+.orgAvatar {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-radius: 999px;
+  border: 1px solid rgba(34, 197, 94, 0.18);
+  background: rgba(255, 255, 255, 0.08);
+  color: #fafafa;
+  font-weight: 600;
+}
+
+.orgAvatar-sm {
+  width: 28px;
+  height: 28px;
+  font-size: 10px;
+}
+
+.orgAvatar-md {
+  width: 36px;
+  height: 36px;
+  font-size: 12px;
+}
+
+.orgAvatar-lg {
+  width: 56px;
+  height: 56px;
+  font-size: 16px;
+}
+
+.orgAvatar-company {
+  background: rgba(34, 197, 94, 0.18);
+}
+
+.orgAvatar-personal {
+  background: rgba(59, 130, 246, 0.18);
+}
+
+.orgAvatar-community {
+  background: rgba(168, 85, 247, 0.18);
+}
+
+.orgAvatarImage {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.orgAvatarFallback {
+  line-height: 1;
+}
+
+.orgAvatar-spacer {
+  display: inline-block;
+  width: 28px;
+  flex-shrink: 0;
+}
+
+.orgProfileHeader {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.orgProfileSummary {
+  display: grid;
+  gap: 4px;
+}
+
+.orgProfileSummary strong {
+  font-size: 18px;
+}
+
+.orgProfileSummary span {
+  color: #a1a1aa;
+  font-size: 13px;
+}
+
+.orgLogoField {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px;
+}
+
+.repoGroupTitle {
+  margin: 0 0 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #71717a;
+}
+
+.historyEventContext,
+.contextReadySummary,
+.taskOrgPreview {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.contextIdentityHero {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.contextIdentityHero > div {
+  min-width: 0;
+}
+
+.contextChainHeader,
+.contextOrgLine {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.orgRepoMapping {
+  display: grid;
+  gap: 10px;
+}
+
+@media (max-width: 1100px) {
+  .orgLayout {
+    grid-template-columns: 1fr;
+  }
+
+  .orgOrgList {
+    max-height: none;
+    overflow-y: visible;
+  }
+}
+
 .backlogPanel {
   min-width: 0;
   overflow: hidden;
@@ -915,14 +1098,10 @@
   color: #fafafa;
 }
 
-.sessionForm input,
+.sessionForm input:not([type="checkbox"]):not([type="radio"]):not(.flex),
 .sessionForm select {
-  border-radius: 16px;
-  border: 1px solid rgba(34, 197, 94, 0.18);
-  background: #141414;
-  padding: 14px 16px;
+  box-sizing: border-box;
   font: inherit;
-  color: #fafafa;
 }
 
 .compactForm textarea {
@@ -1132,10 +1311,6 @@
   gap: 8px;
   font-size: 14px;
   color: #d4d4d8;
-}
-
-.historyFilterRow select {
-  font: inherit;
 }
 
 .historyEventList {
@@ -1469,14 +1644,6 @@
 
 .repoGroup + .repoGroup {
   margin-top: 12px;
-}
-
-.repoGroupTitle {
-  margin: 0 0 8px;
-  font-size: 12px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: #71717a;
 }
 
 .focusChipAction {

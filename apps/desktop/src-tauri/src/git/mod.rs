@@ -103,24 +103,32 @@ pub fn load_guardrail_for_repository(
     });
 
     Ok(Some(RepositoryGuardrailDto {
-        repository_id,
+        repository_id: repository_id.clone(),
         repository_name,
-        organization_id,
+        organization_id: organization_id.clone(),
         organization_name,
-        project_id,
+        project_id: project_id.clone(),
         project_name,
         environment_name,
         identity_source,
         provider_host: expected_provider_host,
         remote_url,
         local_path,
-        expected_git_user_name: expected_user_name,
-        expected_git_user_email: expected_user_email,
+        expected_git_user_name: expected_user_name.clone(),
+        expected_git_user_email: expected_user_email.clone(),
         expected_ssh_host_alias: expected_ssh_alias,
         expected_branch_pattern: branch_pattern,
         provider_username,
         provider_account_label,
         validation,
+        chain_label: crate::domain::resolve_work_context(
+            db_path,
+            organization_id,
+            project_id,
+            Some(repository_id.clone()),
+        )
+        .ok()
+        .and_then(|context| context.chain_label),
     }))
 }
 

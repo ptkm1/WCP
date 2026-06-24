@@ -3,8 +3,12 @@ import {
   FilterTabs,
   HistoryEventButton,
   MainViewTabs,
+  OrganizationAvatar,
+  PageHeader,
   PlanStatusBadge,
+  SearchField,
   SearchResultButton,
+  SectionTitle,
   SelectableListItem,
   StatusAlert,
   StatusBadge,
@@ -16,8 +20,31 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  HISTORY_KIND_ICONS,
+  ORG_TAB_ICONS,
+  getSearchKindIcon,
+} from "@/lib/app-icons";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
+import {
+  buildContextChainLabel,
+  buildWorkContextEntityRefs,
+  listOrganizationContextGaps,
+  validateWorkContextLinks,
+} from "@wcp/domain";
+import {
+  ArrowRightLeft,
+  Building2,
+  FolderGit2,
+  GitBranch,
+  History,
+  Image,
+  Link2,
+  ListTodo,
+  Plus,
+  Save,
+} from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 interface TodaySummary {
@@ -45,6 +72,8 @@ interface ProjectListItemDto {
   id: string;
   name: string;
   organizationId?: string | null;
+  description?: string | null;
+  isActive?: boolean;
 }
 
 interface TaskFormDraft {
@@ -121,6 +150,7 @@ interface RepositoryGuardrailDto {
   providerUsername?: string | null;
   providerAccountLabel?: string | null;
   validation?: IdentityValidationDto | null;
+  chainLabel?: string | null;
 }
 
 interface RepositoryListItemDto {
@@ -144,13 +174,20 @@ interface RepositoryListItemDto {
 interface OrganizationListItemDto {
   id: string;
   name: string;
+  kind?: string;
+  isActive?: boolean;
+  logoPath?: string | null;
   environmentProfileId?: string | null;
   environmentName?: string | null;
+  providerType?: string | null;
   providerHost?: string | null;
   sshHostAlias?: string | null;
   gitUserName?: string | null;
   gitUserEmail?: string | null;
   branchPattern?: string | null;
+  prConvention?: string | null;
+  commitConvention?: string | null;
+  notesJson?: string | null;
 }
 
 interface LocalRepositoryInspectionDto {
@@ -167,6 +204,25 @@ interface LocalRepositoryInspectionDto {
 
 interface CreateRepositoryResultDto {
   repository: RepositoryListItemDto;
+}
+
+interface ResolvedWorkContextDto {
+  organizationId?: string | null;
+  organizationName?: string | null;
+  projectId?: string | null;
+  projectName?: string | null;
+  repositoryId?: string | null;
+  repositoryName?: string | null;
+  environmentProfileId?: string | null;
+  environmentName?: string | null;
+  identitySource?: string | null;
+  expectedGitUserName?: string | null;
+  expectedGitUserEmail?: string | null;
+  providerHost?: string | null;
+  branchPattern?: string | null;
+  chainLabel?: string | null;
+  gaps?: string[];
+  inferredOrganizationFrom?: string | null;
 }
 
 interface UpdateRepositoryResultDto {
@@ -341,7 +397,9 @@ interface ContextEventDto {
   organizationName?: string | null;
 }
 
-type DesktopView = "today" | "backlog" | "repos" | "history";
+type DesktopView = "today" | "backlog" | "organizations" | "repos" | "history";
+
+type OrgDetailTab = "company" | "projects" | "repos" | "identity";
 
 type TimelineFilter = "all" | TimelineEntryDto["kind"];
 
@@ -398,10 +456,18 @@ const TIMELINE_FILTERS: { id: TimelineFilter; label: string }[] = [
 const VIEW_PAGE_HINT: Record<DesktopView, string> = {
   today: "Um resumo do que importa agora e onde colocar o foco.",
   backlog: "Escolha uma tarefa e veja tudo que ja foi registrado sobre ela.",
+  organizations: "Cadastre empresas, projetos e repos com contexto Git claro.",
   repos: "Confira o ambiente Git antes de comecar a trabalhar no projeto.",
   history:
     "Retome qualquer contexto sem depender da tarefa que esta aberta agora.",
 };
+
+const ORG_DETAIL_TABS: { id: OrgDetailTab; label: string }[] = [
+  { id: "company", label: "Empresa" },
+  { id: "projects", label: "Projetos" },
+  { id: "repos", label: "Repos" },
+  { id: "identity", label: "Identidade Git" },
+];
 
 const HISTORY_KIND_FILTERS: { id: HistoryKindFilter; label: string }[] = [
   { id: "all", label: "Todos" },
@@ -459,6 +525,26 @@ async function pickLocalFolder(
   return Array.isArray(picked) ? (picked[0] ?? null) : picked;
 }
 
+async function pickOrganizationLogoFile(): Promise<string | null> {
+  const picked = await open({
+    title: "Selecione o logo da empresa",
+    directory: false,
+    multiple: false,
+    filters: [
+      {
+        name: "Imagem",
+        extensions: ["png", "jpg", "jpeg", "webp", "gif", "svg"],
+      },
+    ],
+  });
+
+  if (picked === null) {
+    return null;
+  }
+
+  return Array.isArray(picked) ? (picked[0] ?? null) : picked;
+}
+
 interface LocalPathFieldProps {
   path: string;
   inspecting: boolean;
@@ -474,6 +560,7 @@ interface TaskFormPanelProps {
   error: string | null;
   warnings: string[];
   organizations: OrganizationListItemDto[];
+  organizationLogoUrls: Record<string, string>;
   projects: ProjectListItemDto[];
   repositories: RepositoryListItemDto[];
   onDraftChange: (patch: Partial<TaskFormDraft>) => void;
@@ -488,6 +575,7 @@ function TaskFormPanel({
   error,
   warnings,
   organizations,
+  organizationLogoUrls,
   projects,
   repositories,
   onDraftChange,
@@ -504,6 +592,11 @@ function TaskFormPanel({
         (repository) => repository.organizationId === draft.organizationId,
       )
     : repositories;
+  const selectedOrganization = draft.organizationId
+    ? (organizations.find(
+        (organization) => organization.id === draft.organizationId,
+      ) ?? null)
+    : null;
 
   return (
     <Card className="border-primary/20">
@@ -597,6 +690,19 @@ function TaskFormPanel({
                   </option>
                 ))}
               </select>
+              {selectedOrganization ? (
+                <span className="taskOrgPreview">
+                  <OrganizationAvatar
+                    name={selectedOrganization.name}
+                    kind={selectedOrganization.kind}
+                    logoUrl={
+                      organizationLogoUrls[selectedOrganization.id] ?? null
+                    }
+                    size="sm"
+                  />
+                  <span>{selectedOrganization.name}</span>
+                </span>
+              ) : null}
             </label>
             <label className="grid gap-2 text-sm text-muted-foreground">
               <Label htmlFor="task-project">Projeto</Label>
@@ -830,6 +936,54 @@ export function App() {
     SearchResultDto[] | null
   >(null);
   const [historySearchBusy, setHistorySearchBusy] = useState(false);
+  const [orgSetupSelectedId, setOrgSetupSelectedId] = useState<string | null>(
+    null,
+  );
+  const [orgDetailTab, setOrgDetailTab] = useState<OrgDetailTab>("company");
+  const [showNewOrgForm, setShowNewOrgForm] = useState(false);
+  const [newOrgName, setNewOrgName] = useState("");
+  const [newOrgKind, setNewOrgKind] = useState("company");
+  const [orgEditName, setOrgEditName] = useState("");
+  const [orgEditKind, setOrgEditKind] = useState("company");
+  const [orgSetupBusy, setOrgSetupBusy] = useState(false);
+  const [orgSetupError, setOrgSetupError] = useState<string | null>(null);
+  const [newOrgProjectName, setNewOrgProjectName] = useState("");
+  const [newOrgProjectDescription, setNewOrgProjectDescription] = useState("");
+  const [orgEnvProviderType, setOrgEnvProviderType] = useState("");
+  const [orgEnvProviderHost, setOrgEnvProviderHost] = useState("");
+  const [orgEnvSshHostAlias, setOrgEnvSshHostAlias] = useState("");
+  const [orgEnvGitUserName, setOrgEnvGitUserName] = useState("");
+  const [orgEnvGitUserEmail, setOrgEnvGitUserEmail] = useState("");
+  const [orgEnvBranchPattern, setOrgEnvBranchPattern] = useState("");
+  const [orgEnvPrConvention, setOrgEnvPrConvention] = useState("");
+  const [orgEnvCommitConvention, setOrgEnvCommitConvention] = useState("");
+  const [orgUsefulLinks, setOrgUsefulLinks] = useState<
+    Array<{ label: string; url: string }>
+  >([{ label: "", url: "" }]);
+  const [orgLinkProjectId, setOrgLinkProjectId] = useState("");
+  const [orgLinkRepoName, setOrgLinkRepoName] = useState("");
+  const [orgLinkRepoPath, setOrgLinkRepoPath] = useState("");
+  const [orgLinkRepoRemote, setOrgLinkRepoRemote] = useState("");
+  const [orgLinkInspection, setOrgLinkInspection] =
+    useState<LocalRepositoryInspectionDto | null>(null);
+  const [orgLinkInspecting, setOrgLinkInspecting] = useState(false);
+  const [reassignRepoId, setReassignRepoId] = useState("");
+  const [reassignProjectId, setReassignProjectId] = useState("");
+  const [orgIdentityRepoId, setOrgIdentityRepoId] = useState<string | null>(
+    null,
+  );
+  const [orgIdentityGuardrail, setOrgIdentityGuardrail] =
+    useState<RepositoryGuardrailDto | null>(null);
+  const [orgIdentityBusy, setOrgIdentityBusy] = useState(false);
+  const [orgIdentityResult, setOrgIdentityResult] = useState<string | null>(
+    null,
+  );
+  const [newRepoProjectId, setNewRepoProjectId] = useState("");
+  const [resolvedWorkContext, setResolvedWorkContext] =
+    useState<ResolvedWorkContextDto | null>(null);
+  const [organizationLogoUrls, setOrganizationLogoUrls] = useState<
+    Record<string, string>
+  >({});
 
   useEffect(() => {
     let cancelled = false;
@@ -861,6 +1015,7 @@ export function App() {
         );
         setRepositories(repoList);
         setOrganizations(orgList);
+        void refreshOrganizationLogos(orgList);
         setProjects(projectList);
         setError(null);
       } catch (loadError) {
@@ -882,6 +1037,76 @@ export function App() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (organizations.length === 0) {
+      setOrgSetupSelectedId(null);
+      return;
+    }
+    if (
+      !orgSetupSelectedId ||
+      !organizations.some((org) => org.id === orgSetupSelectedId)
+    ) {
+      setOrgSetupSelectedId(organizations[0]?.id ?? null);
+    }
+  }, [organizations, orgSetupSelectedId]);
+
+  useEffect(() => {
+    const organization =
+      organizations.find((org) => org.id === orgSetupSelectedId) ?? null;
+    syncOrgEnvForm(organization);
+  }, [orgSetupSelectedId, organizations]);
+
+  useEffect(() => {
+    if (activeView !== "repos" && activeView !== "organizations") {
+      return;
+    }
+
+    const organizationId =
+      activeView === "repos"
+        ? selectedOrganizationId !== "all"
+          ? selectedOrganizationId
+          : null
+        : orgSetupSelectedId;
+    const projectId =
+      activeView === "repos" && newRepoProjectId.trim()
+        ? newRepoProjectId.trim()
+        : null;
+    const repositoryId = activeView === "repos" ? selectedRepoId : null;
+
+    if (!organizationId && !projectId && !repositoryId) {
+      setResolvedWorkContext(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    invoke<ResolvedWorkContextDto>("resolve_work_context", {
+      organizationId,
+      projectId,
+      repositoryId,
+    })
+      .then((response) => {
+        if (!cancelled) {
+          setResolvedWorkContext(response);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setResolvedWorkContext(null);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    activeView,
+    newRepoProjectId,
+    orgSetupSelectedId,
+    selectedOrganizationId,
+    selectedRepoId,
+  ]);
 
   useEffect(() => {
     setTimelineFilter("all");
@@ -1141,6 +1366,89 @@ export function App() {
     return repoList;
   }
 
+  async function reloadOrganizations() {
+    const orgList =
+      await invoke<OrganizationListItemDto[]>("list_organizations");
+    setOrganizations(orgList);
+    await refreshOrganizationLogos(orgList);
+    return orgList;
+  }
+
+  async function refreshOrganizationLogos(
+    orgList: OrganizationListItemDto[],
+  ): Promise<void> {
+    const entries = await Promise.all(
+      orgList
+        .filter((organization) => organization.logoPath)
+        .map(async (organization) => {
+          try {
+            const logoUrl = await invoke<string | null>(
+              "read_organization_logo",
+              {
+                organizationId: organization.id,
+              },
+            );
+            return logoUrl ? ([organization.id, logoUrl] as const) : null;
+          } catch {
+            return null;
+          }
+        }),
+    );
+
+    const next: Record<string, string> = {};
+    for (const entry of entries) {
+      if (entry) {
+        next[entry[0]] = entry[1];
+      }
+    }
+    setOrganizationLogoUrls(next);
+  }
+
+  function getOrganizationLogoUrl(
+    organizationId?: string | null,
+  ): string | null {
+    if (!organizationId) {
+      return null;
+    }
+    return organizationLogoUrls[organizationId] ?? null;
+  }
+
+  function findOrganizationById(
+    organizationId?: string | null,
+  ): OrganizationListItemDto | null {
+    if (!organizationId) {
+      return null;
+    }
+    return (
+      organizations.find(
+        (organization) => organization.id === organizationId,
+      ) ?? null
+    );
+  }
+
+  async function reloadProjects() {
+    const projectList = await invoke<ProjectListItemDto[]>("list_projects");
+    setProjects(projectList);
+    return projectList;
+  }
+
+  function syncOrgEnvForm(organization: OrganizationListItemDto | null) {
+    if (!organization) {
+      return;
+    }
+    setOrgEditName(organization.name);
+    setOrgEditKind(organization.kind ?? "company");
+    setOrgEnvProviderType(organization.providerType ?? "");
+    setOrgEnvProviderHost(organization.providerHost ?? "");
+    setOrgEnvSshHostAlias(organization.sshHostAlias ?? "");
+    setOrgEnvGitUserName(organization.gitUserName ?? "");
+    setOrgEnvGitUserEmail(organization.gitUserEmail ?? "");
+    setOrgEnvBranchPattern(organization.branchPattern ?? "");
+    setOrgEnvPrConvention(organization.prConvention ?? "");
+    setOrgEnvCommitConvention(organization.commitConvention ?? "");
+    setOrgUsefulLinks(parseUsefulLinks(organization.notesJson));
+  }
+
   function resetAddProjectForm() {
     setNewProjectName("");
     setNewProjectPath("");
@@ -1326,6 +1634,7 @@ export function App() {
           remoteUrl: newProjectRemoteUrl.trim() || null,
           providerHost: selectedOrganization?.providerHost ?? null,
           defaultBranch: newProjectInspection?.defaultBranch ?? null,
+          projectId: newRepoProjectId.trim() || null,
         },
       );
 
@@ -1545,6 +1854,42 @@ export function App() {
       null
     );
   }, [organizations, selectedOrganizationId, selectedRepo?.organizationId]);
+  const orgSetupOrganization = useMemo(
+    () =>
+      organizations.find(
+        (organization) => organization.id === orgSetupSelectedId,
+      ) ?? null,
+    [organizations, orgSetupSelectedId],
+  );
+  const orgSetupProjects = useMemo(
+    () =>
+      projects.filter(
+        (project) => project.organizationId === orgSetupSelectedId,
+      ),
+    [orgSetupSelectedId, projects],
+  );
+  const orgSetupRepositories = useMemo(
+    () =>
+      repositories.filter(
+        (repository) => repository.organizationId === orgSetupSelectedId,
+      ),
+    [orgSetupSelectedId, repositories],
+  );
+  const orgSetupGaps = useMemo(
+    () =>
+      resolvedWorkContext?.gaps ??
+      listOrganizationContextGaps(
+        orgSetupOrganization
+          ? {
+              gitUserName: orgSetupOrganization.gitUserName,
+              gitUserEmail: orgSetupOrganization.gitUserEmail,
+              branchPattern: orgSetupOrganization.branchPattern,
+              providerHost: orgSetupOrganization.providerHost,
+            }
+          : null,
+      ),
+    [orgSetupOrganization, resolvedWorkContext?.gaps],
+  );
   const groupedRepositories = useMemo(
     () => groupRepositoriesByOrg(repositories, selectedOrganizationId),
     [repositories, selectedOrganizationId],
@@ -1571,11 +1916,22 @@ export function App() {
       (repository) => repository.organizationId === selectedOrganizationId,
     );
   }, [repositories, selectedOrganizationId]);
-  const contextChainLabel = useMemo(
-    () =>
-      formatContextChain(selectedOrganization, selectedRepo, selectedGuardrail),
-    [selectedGuardrail, selectedOrganization, selectedRepo],
-  );
+  const contextChainLabel = useMemo(() => {
+    if (resolvedWorkContext?.chainLabel) {
+      return resolvedWorkContext.chainLabel;
+    }
+
+    return formatContextChain(
+      selectedOrganization,
+      selectedRepo,
+      selectedGuardrail,
+    );
+  }, [
+    resolvedWorkContext?.chainLabel,
+    selectedGuardrail,
+    selectedOrganization,
+    selectedRepo,
+  ]);
   const newProjectIdentityWarning = useMemo(
     () =>
       buildInspectIdentityWarning(selectedOrganization, newProjectInspection),
@@ -1911,6 +2267,318 @@ export function App() {
 
   function resetContextFlowForReposTab() {
     handleOrganizationChange("all");
+  }
+
+  async function handleCreateOrganization() {
+    const trimmedName = newOrgName.trim();
+    if (!trimmedName) {
+      setOrgSetupError("Informe o nome da empresa.");
+      return;
+    }
+
+    try {
+      setOrgSetupBusy(true);
+      setOrgSetupError(null);
+      const response = await invoke<{ organization: OrganizationListItemDto }>(
+        "create_organization",
+        {
+          name: trimmedName,
+          kind: newOrgKind,
+        },
+      );
+      await reloadOrganizations();
+      setOrgSetupSelectedId(response.organization.id);
+      setShowNewOrgForm(false);
+      setNewOrgName("");
+      setNewOrgKind("company");
+    } catch (createError) {
+      setOrgSetupError(
+        extractErrorMessage(createError, "Falha ao criar empresa"),
+      );
+    } finally {
+      setOrgSetupBusy(false);
+    }
+  }
+
+  async function handleUpdateOrganization() {
+    if (!orgSetupSelectedId) {
+      return;
+    }
+
+    try {
+      setOrgSetupBusy(true);
+      setOrgSetupError(null);
+      await invoke("update_organization", {
+        organizationId: orgSetupSelectedId,
+        name: orgEditName.trim() || null,
+        kind: orgEditKind,
+        isActive: true,
+      });
+      await reloadOrganizations();
+    } catch (updateError) {
+      setOrgSetupError(
+        extractErrorMessage(updateError, "Falha ao atualizar empresa"),
+      );
+    } finally {
+      setOrgSetupBusy(false);
+    }
+  }
+
+  async function handleUploadOrganizationLogo() {
+    if (!orgSetupSelectedId) {
+      return;
+    }
+
+    const sourcePath = await pickOrganizationLogoFile();
+    if (!sourcePath) {
+      return;
+    }
+
+    try {
+      setOrgSetupBusy(true);
+      setOrgSetupError(null);
+      await invoke("update_organization_logo", {
+        organizationId: orgSetupSelectedId,
+        sourcePath,
+      });
+      await reloadOrganizations();
+    } catch (uploadError) {
+      setOrgSetupError(
+        extractErrorMessage(uploadError, "Falha ao salvar logo da empresa"),
+      );
+    } finally {
+      setOrgSetupBusy(false);
+    }
+  }
+
+  async function handleRemoveOrganizationLogo() {
+    if (!orgSetupSelectedId) {
+      return;
+    }
+
+    try {
+      setOrgSetupBusy(true);
+      setOrgSetupError(null);
+      await invoke("remove_organization_logo", {
+        organizationId: orgSetupSelectedId,
+      });
+      await reloadOrganizations();
+    } catch (removeError) {
+      setOrgSetupError(
+        extractErrorMessage(removeError, "Falha ao remover logo da empresa"),
+      );
+    } finally {
+      setOrgSetupBusy(false);
+    }
+  }
+
+  async function handleSaveOrganizationEnvironment() {
+    if (!orgSetupSelectedId) {
+      return;
+    }
+
+    try {
+      setOrgSetupBusy(true);
+      setOrgSetupError(null);
+      await invoke("update_organization_environment", {
+        organizationId: orgSetupSelectedId,
+        providerType: orgEnvProviderType.trim() || null,
+        providerHost: orgEnvProviderHost.trim() || null,
+        sshHostAlias: orgEnvSshHostAlias.trim() || null,
+        gitUserName: orgEnvGitUserName.trim() || null,
+        gitUserEmail: orgEnvGitUserEmail.trim() || null,
+        branchPattern: orgEnvBranchPattern.trim() || null,
+        prConvention: orgEnvPrConvention.trim() || null,
+        commitConvention: orgEnvCommitConvention.trim() || null,
+        notesJson: serializeUsefulLinks(orgUsefulLinks),
+      });
+      await reloadOrganizations();
+    } catch (saveError) {
+      setOrgSetupError(
+        extractErrorMessage(saveError, "Falha ao salvar identidade Git"),
+      );
+    } finally {
+      setOrgSetupBusy(false);
+    }
+  }
+
+  async function handleCreateOrgProject() {
+    if (!orgSetupSelectedId) {
+      return;
+    }
+
+    const trimmedName = newOrgProjectName.trim();
+    if (!trimmedName) {
+      setOrgSetupError("Informe o nome do projeto.");
+      return;
+    }
+
+    try {
+      setOrgSetupBusy(true);
+      setOrgSetupError(null);
+      await invoke("create_project", {
+        organizationId: orgSetupSelectedId,
+        name: trimmedName,
+        description: newOrgProjectDescription.trim() || null,
+      });
+      await reloadProjects();
+      setNewOrgProjectName("");
+      setNewOrgProjectDescription("");
+    } catch (createError) {
+      setOrgSetupError(
+        extractErrorMessage(createError, "Falha ao criar projeto"),
+      );
+    } finally {
+      setOrgSetupBusy(false);
+    }
+  }
+
+  async function handleArchiveOrgProject(projectId: string) {
+    try {
+      setOrgSetupBusy(true);
+      setOrgSetupError(null);
+      await invoke("update_project", {
+        projectId,
+        isActive: false,
+      });
+      await reloadProjects();
+    } catch (archiveError) {
+      setOrgSetupError(
+        extractErrorMessage(archiveError, "Falha ao arquivar projeto"),
+      );
+    } finally {
+      setOrgSetupBusy(false);
+    }
+  }
+
+  async function handleOrgLinkRepository() {
+    if (!orgSetupSelectedId) {
+      return;
+    }
+
+    const trimmedName = orgLinkRepoName.trim();
+    const trimmedPath = orgLinkRepoPath.trim();
+    if (!trimmedName || !trimmedPath) {
+      setOrgSetupError("Informe nome e pasta local do repositorio.");
+      return;
+    }
+
+    try {
+      setOrgSetupBusy(true);
+      setOrgSetupError(null);
+      await invoke<CreateRepositoryResultDto>("create_repository", {
+        organizationId: orgSetupSelectedId,
+        name: trimmedName,
+        localPath: trimmedPath,
+        remoteUrl: orgLinkRepoRemote.trim() || null,
+        providerHost: orgSetupOrganization?.providerHost ?? null,
+        defaultBranch: orgLinkInspection?.defaultBranch ?? null,
+        projectId: orgLinkProjectId.trim() || null,
+      });
+      await reloadRepositories();
+      setOrgLinkRepoName("");
+      setOrgLinkRepoPath("");
+      setOrgLinkRepoRemote("");
+      setOrgLinkProjectId("");
+      setOrgLinkInspection(null);
+    } catch (linkError) {
+      setOrgSetupError(
+        extractErrorMessage(linkError, "Falha ao vincular repositorio"),
+      );
+    } finally {
+      setOrgSetupBusy(false);
+    }
+  }
+
+  async function handleReassignRepository() {
+    if (!orgSetupSelectedId || !reassignRepoId) {
+      return;
+    }
+
+    try {
+      setOrgSetupBusy(true);
+      setOrgSetupError(null);
+      await invoke("update_repository_context", {
+        repositoryId: reassignRepoId,
+        organizationId: orgSetupSelectedId,
+        projectId: reassignProjectId.trim() || null,
+      });
+      await reloadRepositories();
+      setReassignRepoId("");
+      setReassignProjectId("");
+    } catch (reassignError) {
+      setOrgSetupError(
+        extractErrorMessage(reassignError, "Falha ao reassociar repositorio"),
+      );
+    } finally {
+      setOrgSetupBusy(false);
+    }
+  }
+
+  async function handleValidateOrgIdentity() {
+    if (!orgIdentityRepoId) {
+      return;
+    }
+
+    try {
+      setOrgIdentityBusy(true);
+      setOrgIdentityResult(null);
+      const guardrail = await invoke<RepositoryGuardrailDto | null>(
+        "get_repository_guardrail",
+        { repositoryId: orgIdentityRepoId },
+      );
+      setOrgIdentityGuardrail(guardrail);
+      setOrgIdentityResult(
+        guardrail?.validation?.status === "ok"
+          ? "Contexto validado."
+          : "Revise os checks abaixo.",
+      );
+    } catch (validateError) {
+      setOrgIdentityResult(
+        extractErrorMessage(validateError, "Falha ao validar contexto"),
+      );
+    } finally {
+      setOrgIdentityBusy(false);
+    }
+  }
+
+  async function handleApplyOrgIdentity() {
+    if (!orgIdentityRepoId) {
+      return;
+    }
+
+    try {
+      setOrgIdentityBusy(true);
+      setOrgIdentityResult(null);
+      const response = await invoke<{ appliedChanges: string[] }>(
+        "apply_repository_identity",
+        { repositoryId: orgIdentityRepoId },
+      );
+      setOrgIdentityResult(
+        response.appliedChanges.length > 0
+          ? `Identidade aplicada: ${response.appliedChanges.join(", ")}`
+          : "Nenhuma alteracao necessaria.",
+      );
+      await handleValidateOrgIdentity();
+    } catch (applyError) {
+      setOrgIdentityResult(
+        extractErrorMessage(applyError, "Falha ao aplicar identidade"),
+      );
+    } finally {
+      setOrgIdentityBusy(false);
+    }
+  }
+
+  function openGitContextForRepo(repository: RepositoryListItemDto) {
+    requestTaskFormClose(() => {
+      setTaskFormMode(null);
+      setTaskFormError(null);
+      setActiveView("repos");
+      if (repository.organizationId) {
+        setSelectedOrganizationId(repository.organizationId);
+      }
+      handleSelectRepository(repository);
+    });
   }
 
   function goToContextStep(step: number) {
@@ -2734,9 +3402,11 @@ export function App() {
       ? getGreeting()
       : activeView === "backlog"
         ? "Tarefas"
-        : activeView === "history"
-          ? "Historico"
-          : "Projetos";
+        : activeView === "organizations"
+          ? "Empresa"
+          : activeView === "history"
+            ? "Historico"
+            : "Projetos";
 
   return (
     <main className="shell mx-auto max-w-6xl px-6 py-8 pb-20">
@@ -2777,6 +3447,7 @@ export function App() {
                       )
                     }
                   >
+                    <GitBranch className="h-4 w-4" aria-hidden />
                     Ir para contexto
                   </Button>
                 ) : null}
@@ -2786,9 +3457,9 @@ export function App() {
         </div>
 
         <section className="globalSearch relative">
-          <Input
+          <SearchField
             type="search"
-            className="globalSearchInput h-11 rounded-2xl bg-background/80"
+            className="h-11 rounded-2xl bg-background/80"
             placeholder="Buscar em tarefas, notas, sessoes e projetos..."
             value={searchQuery}
             onChange={(event) => setSearchQuery(event.target.value)}
@@ -2816,16 +3487,24 @@ export function App() {
                     className="searchOpenHistoryButton w-full"
                     onClick={openGlobalSearchInHistory}
                   >
+                    <History className="h-4 w-4" aria-hidden />
                     Ver tudo no Historico
                   </Button>
                 </div>
               ) : null}
-              {groupedSearchResults.map((group) => (
+              {groupedSearchResults.map((group) => {
+                const GroupIcon = getSearchKindIcon(group.kind);
+
+                return (
                 <div key={group.kind} className="searchGroup">
-                  <h3 className="searchGroupTitle">{group.label}</h3>
+                  <h3 className="searchGroupTitle inline-flex items-center gap-2">
+                    <GroupIcon className="h-4 w-4 text-muted-foreground" aria-hidden />
+                    {group.label}
+                  </h3>
                   {group.items.map((item) => (
                     <SearchResultButton
                       key={`${item.kind}-${item.id}`}
+                      kind={item.kind}
                       onClick={() => handleSearchResultClick(item)}
                       title={item.title}
                       detail={
@@ -2841,7 +3520,8 @@ export function App() {
                     />
                   ))}
                 </div>
-              ))}
+                );
+              })}
             </div>
           ) : null}
         </section>
@@ -2854,14 +3534,11 @@ export function App() {
         </div>
       </header>
 
-      <header className="pageHeader mb-5">
-        <h1 className="mb-1.5 text-3xl font-semibold tracking-tight">
-          {pageTitle}
-        </h1>
-        <p className="text-sm leading-relaxed text-muted-foreground">
-          {VIEW_PAGE_HINT[activeView]}
-        </p>
-      </header>
+      <PageHeader
+        view={activeView}
+        title={pageTitle}
+        hint={VIEW_PAGE_HINT[activeView]}
+      />
 
       {activeView === "today" ? (
         <>
@@ -3240,6 +3917,7 @@ export function App() {
                     }
                   }}
                 >
+                  <ArrowRightLeft className="h-4 w-4" aria-hidden />
                   Abrir troca de contexto
                 </Button>
               </div>
@@ -3253,15 +3931,16 @@ export function App() {
           <div className="backlogLayout">
             <aside className="backlogSidebar">
               <div className="backlogSidebarHeader">
-                <p className="backlogSidebarTitle">Suas tarefas</p>
+                <SectionTitle icon={ListTodo}>Suas tarefas</SectionTitle>
                 <Button type="button" size="sm" onClick={openCreateTaskForm}>
+                  <Plus className="h-4 w-4" aria-hidden />
                   Nova tarefa
                 </Button>
               </div>
 
-              <Input
+              <SearchField
                 type="search"
-                className="globalSearchInput h-10"
+                className="h-10"
                 placeholder="Buscar tarefas..."
                 value={backlogSearchQuery}
                 onChange={(event) => setBacklogSearchQuery(event.target.value)}
@@ -3492,6 +4171,7 @@ export function App() {
                   error={taskFormError}
                   warnings={taskFormWarnings}
                   organizations={organizations}
+                  organizationLogoUrls={organizationLogoUrls}
                   projects={projects}
                   repositories={repositories}
                   onDraftChange={updateTaskFormDraft}
@@ -3548,6 +4228,7 @@ export function App() {
                         items={TIMELINE_FILTERS.map((filter) => ({
                           id: filter.id,
                           label: `${filter.label} (${timelineCounts[filter.id]})`,
+                          icon: HISTORY_KIND_ICONS[filter.id],
                         }))}
                       />
                     ) : null}
@@ -3851,6 +4532,680 @@ export function App() {
         </section>
       ) : null}
 
+      {activeView === "organizations" ? (
+        <section className="panel orgPanel">
+          <div className="orgLayout">
+            <aside className="orgSidebar">
+              <div className="backlogSidebarHeader">
+                <SectionTitle icon={Building2}>Empresas</SectionTitle>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setShowNewOrgForm((current) => !current);
+                    setOrgSetupError(null);
+                  }}
+                >
+                  <Plus className="h-4 w-4" aria-hidden />
+                  Nova empresa
+                </Button>
+              </div>
+
+              {showNewOrgForm ? (
+                <div className="sessionForm compactForm">
+                  <label>
+                    Nome
+                    <input
+                      value={newOrgName}
+                      onChange={(event) => setNewOrgName(event.target.value)}
+                      placeholder="Empresa A"
+                    />
+                  </label>
+                  <label>
+                    Tipo
+                    <select
+                      value={newOrgKind}
+                      onChange={(event) => setNewOrgKind(event.target.value)}
+                    >
+                      <option value="company">Empresa</option>
+                      <option value="personal">Pessoal</option>
+                      <option value="community">Comunidade</option>
+                    </select>
+                  </label>
+                  <div className="actionRow">
+                    <Button
+                      type="button"
+                      onClick={() => void handleCreateOrganization()}
+                      disabled={orgSetupBusy || !newOrgName.trim()}
+                    >
+                      <Building2 className="h-4 w-4" aria-hidden />
+                      Criar empresa
+                    </Button>
+                  </div>
+                </div>
+              ) : null}
+
+              <div className="repoList orgOrgList">
+                {organizations.map((organization) => (
+                  <SelectableListItem
+                    key={organization.id}
+                    active={orgSetupSelectedId === organization.id}
+                    onClick={() => {
+                      setOrgSetupSelectedId(organization.id);
+                      setOrgSetupError(null);
+                    }}
+                    leading={
+                      <OrganizationAvatar
+                        name={organization.name}
+                        kind={organization.kind}
+                        logoUrl={getOrganizationLogoUrl(organization.id)}
+                        size="sm"
+                      />
+                    }
+                    title={organization.name}
+                    subtitle={formatOrganizationKind(organization.kind)}
+                  >
+                    {organization.gitUserName ? (
+                      <Badge variant="outline">
+                        {organization.gitUserName}
+                      </Badge>
+                    ) : (
+                      <Badge variant="warning">Sem identidade Git</Badge>
+                    )}
+                    <span>
+                      {
+                        projects.filter(
+                          (project) =>
+                            project.organizationId === organization.id,
+                        ).length
+                      }{" "}
+                      projetos
+                    </span>
+                  </SelectableListItem>
+                ))}
+              </div>
+            </aside>
+
+            <div className="orgDetail">
+              {orgSetupError ? (
+                <p className="errorText">{orgSetupError}</p>
+              ) : null}
+
+              {orgSetupOrganization ? (
+                <>
+                  <FilterTabs
+                    items={ORG_DETAIL_TABS.map((tab) => ({
+                      id: tab.id,
+                      label: tab.label,
+                      icon: ORG_TAB_ICONS[tab.id],
+                    }))}
+                    value={orgDetailTab}
+                    onValueChange={(value) => setOrgDetailTab(value)}
+                    aria-label="Secoes da empresa"
+                  />
+
+                  {orgDetailTab === "company" ? (
+                    <div className="orgDetailSection">
+                      <div className="orgProfileHeader">
+                        <OrganizationAvatar
+                          name={orgSetupOrganization.name}
+                          kind={orgSetupOrganization.kind}
+                          logoUrl={getOrganizationLogoUrl(
+                            orgSetupOrganization.id,
+                          )}
+                          size="lg"
+                        />
+                        <div className="orgProfileSummary">
+                          <strong>{orgSetupOrganization.name}</strong>
+                          <span>
+                            {formatOrganizationKind(orgSetupOrganization.kind)}
+                          </span>
+                          <span>
+                            Perfil Git:{" "}
+                            {orgSetupOrganization.environmentName ?? "Padrao"}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="contextIdentityCard">
+                        <article>
+                          <span>Empresa</span>
+                          <strong>{orgSetupOrganization.name}</strong>
+                        </article>
+                        <article>
+                          <span>Tipo</span>
+                          <strong>
+                            {formatOrganizationKind(orgSetupOrganization.kind)}
+                          </strong>
+                        </article>
+                        <article>
+                          <span>Perfil Git</span>
+                          <strong>
+                            {orgSetupOrganization.environmentName ?? "Padrao"}
+                          </strong>
+                        </article>
+                      </div>
+
+                      {orgSetupGaps.length > 0 ? (
+                        <div className="todayStatusChips">
+                          {orgSetupGaps.map((gap) => (
+                            <Badge key={gap} variant="warning">
+                              {gap}
+                            </Badge>
+                          ))}
+                        </div>
+                      ) : (
+                        <StatusAlert status="ok" title="Contexto basico pronto">
+                          Empresa, perfil Git e repos podem ser usados no fluxo
+                          de trabalho.
+                        </StatusAlert>
+                      )}
+
+                      <div className="sessionForm compactForm">
+                        <SectionTitle icon={Image}>Logo da empresa</SectionTitle>
+                        <div className="orgLogoField">
+                          <OrganizationAvatar
+                            name={orgEditName || orgSetupOrganization.name}
+                            kind={orgEditKind}
+                            logoUrl={getOrganizationLogoUrl(
+                              orgSetupOrganization.id,
+                            )}
+                            size="lg"
+                          />
+                          <div className="actionRow">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              onClick={() =>
+                                void handleUploadOrganizationLogo()
+                              }
+                              disabled={orgSetupBusy}
+                            >
+                              <Image className="h-4 w-4" aria-hidden />
+                              Escolher imagem
+                            </Button>
+                            {orgSetupOrganization.logoPath ? (
+                              <Button
+                                type="button"
+                                variant="outline"
+                                onClick={() =>
+                                  void handleRemoveOrganizationLogo()
+                                }
+                                disabled={orgSetupBusy}
+                              >
+                                Remover logo
+                              </Button>
+                            ) : null}
+                          </div>
+                        </div>
+                        <label>
+                          Nome
+                          <input
+                            value={orgEditName}
+                            onChange={(event) =>
+                              setOrgEditName(event.target.value)
+                            }
+                          />
+                        </label>
+                        <label>
+                          Tipo
+                          <select
+                            value={orgEditKind}
+                            onChange={(event) =>
+                              setOrgEditKind(event.target.value)
+                            }
+                          >
+                            <option value="company">Empresa</option>
+                            <option value="personal">Pessoal</option>
+                            <option value="community">Comunidade</option>
+                          </select>
+                        </label>
+                        <div className="actionRow">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => void handleUpdateOrganization()}
+                            disabled={orgSetupBusy || !orgEditName.trim()}
+                          >
+                            <Save className="h-4 w-4" aria-hidden />
+                            Salvar empresa
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {orgDetailTab === "projects" ? (
+                    <div className="orgDetailSection">
+                      <div className="sessionForm compactForm">
+                        <label>
+                          Nome do projeto
+                          <input
+                            value={newOrgProjectName}
+                            onChange={(event) =>
+                              setNewOrgProjectName(event.target.value)
+                            }
+                            placeholder="IAM Platform"
+                          />
+                        </label>
+                        <label>
+                          Descricao (opcional)
+                          <Textarea
+                            value={newOrgProjectDescription}
+                            onChange={(event) =>
+                              setNewOrgProjectDescription(event.target.value)
+                            }
+                          />
+                        </label>
+                        <div className="actionRow">
+                          <Button
+                            type="button"
+                            onClick={() => void handleCreateOrgProject()}
+                            disabled={orgSetupBusy || !newOrgProjectName.trim()}
+                          >
+                            Novo projeto
+                          </Button>
+                        </div>
+                      </div>
+
+                      <ul className="historyList">
+                        {orgSetupProjects.map((project) => (
+                          <li key={project.id}>
+                            <div>
+                              <strong>{project.name}</strong>
+                              <span>
+                                {project.description?.trim() || "Sem descricao"}
+                              </span>
+                            </div>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              onClick={() =>
+                                void handleArchiveOrgProject(project.id)
+                              }
+                              disabled={orgSetupBusy}
+                            >
+                              Arquivar
+                            </Button>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
+
+                  {orgDetailTab === "repos" ? (
+                    <div className="orgDetailSection">
+                      <div className="sessionForm compactForm">
+                        <label>
+                          Projeto (opcional)
+                          <select
+                            value={orgLinkProjectId}
+                            onChange={(event) =>
+                              setOrgLinkProjectId(event.target.value)
+                            }
+                          >
+                            <option value="">Sem projeto</option>
+                            {orgSetupProjects.map((project) => (
+                              <option key={project.id} value={project.id}>
+                                {project.name}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <LocalPathField
+                          path={orgLinkRepoPath}
+                          inspecting={orgLinkInspecting}
+                          onPathChange={(value) => {
+                            setOrgLinkRepoPath(value);
+                            setOrgLinkInspection(null);
+                          }}
+                          onBrowse={async () => {
+                            const picked =
+                              await pickLocalFolder(orgLinkRepoPath);
+                            if (!picked) return;
+                            setOrgLinkRepoPath(picked);
+                            setOrgLinkInspection(null);
+                          }}
+                          onInspect={() =>
+                            void inspectLocalProjectPath(orgLinkRepoPath, {
+                              setInspection: setOrgLinkInspection,
+                              setPath: setOrgLinkRepoPath,
+                              setError: setOrgSetupError,
+                              setInspecting: setOrgLinkInspecting,
+                              onDetected: (inspection) => {
+                                if (
+                                  !orgLinkRepoName.trim() &&
+                                  inspection.suggestedName
+                                ) {
+                                  setOrgLinkRepoName(inspection.suggestedName);
+                                }
+                                if (
+                                  !orgLinkRepoRemote.trim() &&
+                                  inspection.remoteUrl
+                                ) {
+                                  setOrgLinkRepoRemote(inspection.remoteUrl);
+                                }
+                              },
+                            })
+                          }
+                        />
+                        <label>
+                          Nome do repositorio
+                          <input
+                            value={orgLinkRepoName}
+                            onChange={(event) =>
+                              setOrgLinkRepoName(event.target.value)
+                            }
+                          />
+                        </label>
+                        <label>
+                          Remoto (opcional)
+                          <input
+                            value={orgLinkRepoRemote}
+                            onChange={(event) =>
+                              setOrgLinkRepoRemote(event.target.value)
+                            }
+                          />
+                        </label>
+                        <div className="actionRow">
+                          <Button
+                            type="button"
+                            onClick={() => void handleOrgLinkRepository()}
+                            disabled={
+                              orgSetupBusy ||
+                              !orgLinkRepoName.trim() ||
+                              !orgLinkRepoPath.trim() ||
+                              !orgLinkInspection?.isGitRepo
+                            }
+                          >
+                            Vincular repo
+                          </Button>
+                        </div>
+                      </div>
+
+                      <div className="sessionForm compactForm">
+                        <label>
+                          Reassociar repositorio
+                          <select
+                            value={reassignRepoId}
+                            onChange={(event) =>
+                              setReassignRepoId(event.target.value)
+                            }
+                          >
+                            <option value="">Selecione</option>
+                            {orgSetupRepositories.map((repository) => (
+                              <option key={repository.id} value={repository.id}>
+                                {repository.name}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label>
+                          Projeto
+                          <select
+                            value={reassignProjectId}
+                            onChange={(event) =>
+                              setReassignProjectId(event.target.value)
+                            }
+                          >
+                            <option value="">Sem projeto</option>
+                            {orgSetupProjects.map((project) => (
+                              <option key={project.id} value={project.id}>
+                                {project.name}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <div className="actionRow">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => void handleReassignRepository()}
+                            disabled={orgSetupBusy || !reassignRepoId}
+                          >
+                            Reassociar
+                          </Button>
+                        </div>
+                      </div>
+
+                      <ul className="historyList orgRepoMapping">
+                        {orgSetupRepositories.map((repository) => (
+                          <li key={repository.id}>
+                            <div>
+                              <strong>{repository.name}</strong>
+                              <span>
+                                {repository.projectName ?? "Sem projeto"} ·{" "}
+                                {repository.localPath ?? "Sem pasta local"}
+                              </span>
+                            </div>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              onClick={() => openGitContextForRepo(repository)}
+                            >
+                              Ir para troca de contexto
+                            </Button>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
+
+                  {orgDetailTab === "identity" ? (
+                    <div className="orgDetailSection">
+                      <div className="orgIdentityGrid sessionForm compactForm">
+                        <label>
+                          Provider type
+                          <select
+                            value={orgEnvProviderType}
+                            onChange={(event) =>
+                              setOrgEnvProviderType(event.target.value)
+                            }
+                          >
+                            <option value="">Selecione</option>
+                            <option value="github">GitHub</option>
+                            <option value="gitlab">GitLab</option>
+                            <option value="bitbucket">Bitbucket</option>
+                            <option value="gitea">Gitea</option>
+                            <option value="azure">Azure</option>
+                            <option value="other">Outro</option>
+                          </select>
+                        </label>
+                        <label>
+                          Provider host
+                          <input
+                            value={orgEnvProviderHost}
+                            onChange={(event) =>
+                              setOrgEnvProviderHost(event.target.value)
+                            }
+                          />
+                        </label>
+                        <label>
+                          Alias SSH
+                          <input
+                            value={orgEnvSshHostAlias}
+                            onChange={(event) =>
+                              setOrgEnvSshHostAlias(event.target.value)
+                            }
+                          />
+                        </label>
+                        <label>
+                          Git user.name
+                          <input
+                            value={orgEnvGitUserName}
+                            onChange={(event) =>
+                              setOrgEnvGitUserName(event.target.value)
+                            }
+                          />
+                        </label>
+                        <label>
+                          Git user.email
+                          <input
+                            value={orgEnvGitUserEmail}
+                            onChange={(event) =>
+                              setOrgEnvGitUserEmail(event.target.value)
+                            }
+                          />
+                        </label>
+                        <label>
+                          Padrao de branch
+                          <input
+                            value={orgEnvBranchPattern}
+                            onChange={(event) =>
+                              setOrgEnvBranchPattern(event.target.value)
+                            }
+                            placeholder="feature/*"
+                          />
+                        </label>
+                        <label>
+                          Convencao de PR
+                          <input
+                            value={orgEnvPrConvention}
+                            onChange={(event) =>
+                              setOrgEnvPrConvention(event.target.value)
+                            }
+                          />
+                        </label>
+                        <label>
+                          Convencao de commit
+                          <input
+                            value={orgEnvCommitConvention}
+                            onChange={(event) =>
+                              setOrgEnvCommitConvention(event.target.value)
+                            }
+                          />
+                        </label>
+                      </div>
+
+                      <div className="sessionForm compactForm">
+                        <SectionTitle icon={Link2}>Links uteis</SectionTitle>
+                        {orgUsefulLinks.map((link, index) => (
+                          <div key={index} className="historyFilterRow">
+                            <label>
+                              Rotulo
+                              <input
+                                value={link.label}
+                                onChange={(event) => {
+                                  const next = [...orgUsefulLinks];
+                                  next[index] = {
+                                    ...next[index],
+                                    label: event.target.value,
+                                  };
+                                  setOrgUsefulLinks(next);
+                                }}
+                              />
+                            </label>
+                            <label>
+                              URL
+                              <input
+                                value={link.url}
+                                onChange={(event) => {
+                                  const next = [...orgUsefulLinks];
+                                  next[index] = {
+                                    ...next[index],
+                                    url: event.target.value,
+                                  };
+                                  setOrgUsefulLinks(next);
+                                }}
+                              />
+                            </label>
+                          </div>
+                        ))}
+                        <div className="actionRow">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() =>
+                              setOrgUsefulLinks((current) => [
+                                ...current,
+                                { label: "", url: "" },
+                              ])
+                            }
+                          >
+                            Adicionar link
+                          </Button>
+                          <Button
+                            type="button"
+                            onClick={() =>
+                              void handleSaveOrganizationEnvironment()
+                            }
+                            disabled={orgSetupBusy}
+                          >
+                            <Save className="h-4 w-4" aria-hidden />
+                            Salvar identidade
+                          </Button>
+                        </div>
+                      </div>
+
+                      <div className="orgRepoMapping">
+                        <p className="backlogSidebarTitle">
+                          Mapeamento por repositorio
+                        </p>
+                        <label>
+                          Repositorio
+                          <select
+                            value={orgIdentityRepoId ?? ""}
+                            onChange={(event) => {
+                              setOrgIdentityRepoId(event.target.value || null);
+                              setOrgIdentityGuardrail(null);
+                              setOrgIdentityResult(null);
+                            }}
+                          >
+                            <option value="">Selecione</option>
+                            {orgSetupRepositories.map((repository) => (
+                              <option key={repository.id} value={repository.id}>
+                                {repository.name}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <div className="actionRow">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => void handleApplyOrgIdentity()}
+                            disabled={orgIdentityBusy || !orgIdentityRepoId}
+                          >
+                            Aplicar identidade
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => void handleValidateOrgIdentity()}
+                            disabled={orgIdentityBusy || !orgIdentityRepoId}
+                          >
+                            Validar contexto
+                          </Button>
+                        </div>
+                        {orgIdentityResult ? (
+                          <p className="resultText">{orgIdentityResult}</p>
+                        ) : null}
+                        {orgIdentityGuardrail?.validation?.checks.map(
+                          (check) => (
+                            <StatusAlert
+                              key={check.key}
+                              status={check.status === "ok" ? "ok" : "warning"}
+                              title={check.message}
+                            >
+                              {formatValidationCheckDetail(check)}
+                            </StatusAlert>
+                          ),
+                        )}
+                      </div>
+                    </div>
+                  ) : null}
+                </>
+              ) : (
+                <StatusAlert status="warning" title="Nenhuma empresa">
+                  Crie a primeira empresa para organizar projetos e repos.
+                </StatusAlert>
+              )}
+            </div>
+          </div>
+        </section>
+      ) : null}
+
       {activeView === "repos" ? (
         <section className="panel repoPanel">
           <div className="repoHeader">
@@ -3888,10 +5243,24 @@ export function App() {
 
             {contextChainLabel && contextStep >= 1 && contextStep <= 3 ? (
               <div className="contextChainCard">
-                <span className="backlogSidebarTitle">Cadeia de contexto</span>
-                <p className="dayBriefLine dayBriefLine-strong">
-                  {contextChainLabel}
-                </p>
+                <SectionTitle icon={GitBranch}>Cadeia de contexto</SectionTitle>
+                {selectedOrganization ? (
+                  <div className="contextChainHeader">
+                    <OrganizationAvatar
+                      name={selectedOrganization.name}
+                      kind={selectedOrganization.kind}
+                      logoUrl={getOrganizationLogoUrl(selectedOrganization.id)}
+                      size="sm"
+                    />
+                    <p className="dayBriefLine dayBriefLine-strong">
+                      {contextChainLabel}
+                    </p>
+                  </div>
+                ) : (
+                  <p className="dayBriefLine dayBriefLine-strong">
+                    {contextChainLabel}
+                  </p>
+                )}
               </div>
             ) : null}
 
@@ -3919,14 +5288,24 @@ export function App() {
 
                   {selectedOrganization ? (
                     <div className="contextIdentityCard">
-                      <article>
-                        <span>Empresa / ambiente</span>
-                        <strong>
-                          {selectedOrganization.name}
-                          {selectedOrganization.environmentName
-                            ? ` · ${selectedOrganization.environmentName}`
-                            : ""}
-                        </strong>
+                      <article className="contextIdentityHero">
+                        <OrganizationAvatar
+                          name={selectedOrganization.name}
+                          kind={selectedOrganization.kind}
+                          logoUrl={getOrganizationLogoUrl(
+                            selectedOrganization.id,
+                          )}
+                          size="md"
+                        />
+                        <div>
+                          <span>Empresa / ambiente</span>
+                          <strong>
+                            {selectedOrganization.name}
+                            {selectedOrganization.environmentName
+                              ? ` · ${selectedOrganization.environmentName}`
+                              : ""}
+                          </strong>
+                        </div>
                       </article>
                       <article>
                         <span>Provider host</span>
@@ -3964,6 +5343,22 @@ export function App() {
                         </strong>
                       </article>
                     </div>
+                  ) : organizations.length === 0 ? (
+                    <StatusAlert
+                      status="warning"
+                      title="Nenhuma empresa cadastrada"
+                    >
+                      Cadastre uma empresa antes de preparar o contexto Git.
+                      <div className="actionRow">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() => switchActiveView("organizations")}
+                        >
+                          Cadastrar empresa
+                        </Button>
+                      </div>
+                    </StatusAlert>
                   ) : (
                     <StatusAlert status="warning" title="Escolha a empresa">
                       Selecione acima qual contexto voce quer preparar.
@@ -3984,11 +5379,19 @@ export function App() {
 
               {contextStep === 2 ? (
                 <>
-                  <p className="muted">
-                    Empresa:{" "}
-                    <strong>
-                      {selectedOrganization?.name ?? "Nao selecionada"}
-                    </strong>
+                  <p className="muted contextOrgLine">
+                    <OrganizationAvatar
+                      name={selectedOrganization?.name ?? "Empresa"}
+                      kind={selectedOrganization?.kind}
+                      logoUrl={getOrganizationLogoUrl(selectedOrganization?.id)}
+                      size="sm"
+                    />
+                    <span>
+                      Empresa:{" "}
+                      <strong>
+                        {selectedOrganization?.name ?? "Nao selecionada"}
+                      </strong>
+                    </span>
                   </p>
 
                   <div className="addProjectPanel">
@@ -4026,6 +5429,28 @@ export function App() {
                           onBrowse={() => void browseNewProjectPath()}
                           onInspect={() => void inspectNewProjectPath()}
                         />
+                        <label>
+                          Projeto (opcional)
+                          <select
+                            value={newRepoProjectId}
+                            onChange={(event) =>
+                              setNewRepoProjectId(event.target.value)
+                            }
+                          >
+                            <option value="">Sem projeto</option>
+                            {projects
+                              .filter(
+                                (project) =>
+                                  project.organizationId ===
+                                  selectedOrganizationId,
+                              )
+                              .map((project) => (
+                                <option key={project.id} value={project.id}>
+                                  {project.name}
+                                </option>
+                              ))}
+                          </select>
+                        </label>
                         <label>
                           Nome do repositorio
                           <input
@@ -4443,10 +5868,41 @@ export function App() {
               {contextStep === 6 ? (
                 <>
                   <StatusAlert status="ok" title="Contexto preparado">
-                    {selectedOrganization?.name ??
-                      selectedRepo?.organizationName}
-                    {" · "}
-                    {selectedRepo?.name ?? "projeto"}
+                    <span className="contextReadySummary">
+                      {selectedOrganization ? (
+                        <OrganizationAvatar
+                          name={selectedOrganization.name}
+                          kind={selectedOrganization.kind}
+                          logoUrl={getOrganizationLogoUrl(
+                            selectedOrganization.id,
+                          )}
+                          size="sm"
+                        />
+                      ) : selectedRepo?.organizationId ? (
+                        <OrganizationAvatar
+                          name={
+                            findOrganizationById(selectedRepo.organizationId)
+                              ?.name ??
+                            selectedRepo.organizationName ??
+                            "Empresa"
+                          }
+                          kind={
+                            findOrganizationById(selectedRepo.organizationId)
+                              ?.kind
+                          }
+                          logoUrl={getOrganizationLogoUrl(
+                            selectedRepo.organizationId,
+                          )}
+                          size="sm"
+                        />
+                      ) : null}
+                      <span>
+                        {selectedOrganization?.name ??
+                          selectedRepo?.organizationName}
+                        {" · "}
+                        {selectedRepo?.name ?? "projeto"}
+                      </span>
+                    </span>
                   </StatusAlert>
                   <ul className="contextChecklist">
                     {contextSwitchChecks.map((check) => (
@@ -4492,12 +5948,22 @@ export function App() {
             {contextStep >= 2 ? (
               <>
                 <aside className="repoList">
-                  <p className="backlogSidebarTitle">
+                  <SectionTitle icon={FolderGit2}>
                     Repositorios por empresa
-                  </p>
+                  </SectionTitle>
                   {groupedRepositories.map((group) => (
                     <div key={group.organizationName} className="repoGroup">
-                      <p className="repoGroupTitle">{group.organizationName}</p>
+                      <p className="repoGroupTitle">
+                        <OrganizationAvatar
+                          name={group.organizationName}
+                          kind={
+                            findOrganizationById(group.organizationId)?.kind
+                          }
+                          logoUrl={getOrganizationLogoUrl(group.organizationId)}
+                          size="sm"
+                        />
+                        <span>{group.organizationName}</span>
+                      </p>
                       {group.repositories.map((repository) => (
                         <SelectableListItem
                           key={repository.id}
@@ -4764,9 +6230,8 @@ export function App() {
         <section className="panel historyPanel">
           <div className="historyFilters">
             <div className="historyFilterRow">
-              <Input
+              <SearchField
                 type="search"
-                className="globalSearchInput"
                 placeholder="Filtrar por texto no historico..."
                 value={historyTextQuery}
                 onChange={(event) => setHistoryTextQuery(event.target.value)}
@@ -4780,6 +6245,7 @@ export function App() {
               items={HISTORY_KIND_FILTERS.map((filter) => ({
                 id: filter.id,
                 label: `${filter.label} (${historyKindCounts[filter.id]})`,
+                icon: HISTORY_KIND_ICONS[filter.id],
               }))}
             />
             <div className="historyFilterRow">
@@ -4872,7 +6338,31 @@ export function App() {
                               ? truncateSearchDetail(event.detail)
                               : undefined
                           }
-                          context={formatHistoryEventMeta(event) || undefined}
+                          context={
+                            formatHistoryEventMeta(event) ? (
+                              <span className="historyEventContext">
+                                {event.organizationId ? (
+                                  <OrganizationAvatar
+                                    name={
+                                      findOrganizationById(event.organizationId)
+                                        ?.name ??
+                                      event.organizationName ??
+                                      "Empresa"
+                                    }
+                                    kind={
+                                      findOrganizationById(event.organizationId)
+                                        ?.kind
+                                    }
+                                    logoUrl={getOrganizationLogoUrl(
+                                      event.organizationId,
+                                    )}
+                                    size="sm"
+                                  />
+                                ) : null}
+                                <span>{formatHistoryEventMeta(event)}</span>
+                              </span>
+                            ) : undefined
+                          }
                         />
                       </li>
                     ))}
@@ -5099,40 +6589,36 @@ function formatContextChain(
     return null;
   }
 
-  const orgLabel =
-    organization?.name ?? guardrail?.organizationName ?? "Empresa";
-  const profileLabel =
-    repository?.environmentName ??
-    organization?.environmentName ??
-    guardrail?.environmentName ??
-    "Perfil";
-  const repoLabel =
-    repository?.name ?? guardrail?.repositoryName ?? "Repositorio";
-  const gitName =
-    guardrail?.expectedGitUserName ??
-    repository?.expectedGitUserName ??
-    organization?.gitUserName;
-  const gitEmail =
-    guardrail?.expectedGitUserEmail ??
-    repository?.expectedGitUserEmail ??
-    organization?.gitUserEmail;
-  const gitLabel =
-    gitName && gitEmail
-      ? `${gitName} <${gitEmail}>`
-      : (gitName ?? gitEmail ?? "identidade nao configurada");
-  const sourceLabel =
-    guardrail?.identitySource === "override"
-      ? "override local"
-      : guardrail?.identitySource === "profile"
-        ? "via perfil"
-        : null;
+  const identitySource = guardrail?.identitySource
+    ? guardrail.identitySource === "override"
+      ? "override"
+      : guardrail.identitySource === "profile"
+        ? "profile"
+        : null
+    : null;
 
-  return [
-    orgLabel,
-    profileLabel,
-    repoLabel,
-    `git: ${gitLabel}${sourceLabel ? ` (${sourceLabel})` : ""}`,
-  ].join(" → ");
+  return buildContextChainLabel({
+    organizationName: organization?.name ?? guardrail?.organizationName ?? null,
+    environmentName:
+      repository?.environmentName ??
+      organization?.environmentName ??
+      guardrail?.environmentName ??
+      null,
+    repositoryName: repository?.name ?? guardrail?.repositoryName ?? null,
+    effectiveIdentity: {
+      gitUserName:
+        guardrail?.expectedGitUserName ??
+        repository?.expectedGitUserName ??
+        organization?.gitUserName ??
+        null,
+      gitUserEmail:
+        guardrail?.expectedGitUserEmail ??
+        repository?.expectedGitUserEmail ??
+        organization?.gitUserEmail ??
+        null,
+    },
+    identitySource,
+  });
 }
 
 function buildInspectIdentityWarning(
@@ -5228,41 +6714,37 @@ function getTaskFormWarnings(
     warnings.push("Informe o motivo do bloqueio.");
   }
 
-  if (draft.projectId) {
-    const project = projects.find((entry) => entry.id === draft.projectId);
-    if (
-      draft.organizationId &&
-      project?.organizationId &&
-      project.organizationId !== draft.organizationId
-    ) {
-      warnings.push("O projeto selecionado pertence a outra empresa.");
-    }
-  }
+  const refs = buildWorkContextEntityRefs({
+    projects: projects.map((project) => ({
+      id: project.id,
+      organizationId: project.organizationId,
+      name: project.name,
+      isActive: project.isActive ?? true,
+    })),
+    repositories: repositories.map((repository) => ({
+      id: repository.id,
+      organizationId: repository.organizationId,
+      projectId: repository.projectId,
+      name: repository.name,
+      isActive: repository.isActive,
+    })),
+    organizations: organizations.map((organization) => ({
+      id: organization.id,
+      name: organization.name,
+      isActive: organization.isActive ?? true,
+    })),
+  });
 
-  if (draft.primaryRepositoryId) {
-    const repository = repositories.find(
-      (entry) => entry.id === draft.primaryRepositoryId,
-    );
-    if (
-      draft.organizationId &&
-      repository?.organizationId &&
-      repository.organizationId !== draft.organizationId
-    ) {
-      warnings.push("O repositorio selecionado pertence a outra empresa.");
-    }
-    if (draft.projectId && repository) {
-      const project = projects.find((entry) => entry.id === draft.projectId);
-      if (
-        project?.organizationId &&
-        repository.organizationId &&
-        project.organizationId !== repository.organizationId
-      ) {
-        warnings.push(
-          "Repositorio e projeto parecem ser de contextos diferentes.",
-        );
-      }
-    }
-  }
+  warnings.push(
+    ...validateWorkContextLinks(
+      {
+        organizationId: draft.organizationId || null,
+        projectId: draft.projectId || null,
+        repositoryId: draft.primaryRepositoryId || null,
+      },
+      refs,
+    ).map((issue) => issue.message),
+  );
 
   if (
     draft.organizationId &&
@@ -5386,7 +6868,11 @@ function buildContextSwitchChecks(
 function groupRepositoriesByOrg(
   repositories: RepositoryListItemDto[],
   organizationFilter: string,
-): { organizationName: string; repositories: RepositoryListItemDto[] }[] {
+): {
+  organizationId?: string | null;
+  organizationName: string;
+  repositories: RepositoryListItemDto[];
+}[] {
   const filtered =
     organizationFilter === "all"
       ? repositories
@@ -5404,6 +6890,7 @@ function groupRepositoriesByOrg(
 
   return Array.from(groups.entries()).map(
     ([organizationName, groupedRepositories]) => ({
+      organizationId: groupedRepositories[0]?.organizationId ?? null,
       organizationName,
       repositories: groupedRepositories,
     }),
@@ -5626,6 +7113,57 @@ const SOURCE_TYPE_LABELS: Record<string, string> = {
 
 function formatSourceTypeLabel(sourceType: string): string {
   return SOURCE_TYPE_LABELS[sourceType] ?? sourceType;
+}
+
+function formatOrganizationKind(kind?: string | null): string {
+  switch (kind) {
+    case "personal":
+      return "Pessoal";
+    case "community":
+      return "Comunidade";
+    case "company":
+    default:
+      return "Empresa";
+  }
+}
+
+function parseUsefulLinks(
+  notesJson?: string | null,
+): Array<{ label: string; url: string }> {
+  if (!notesJson?.trim()) {
+    return [{ label: "", url: "" }];
+  }
+
+  try {
+    const parsed = JSON.parse(notesJson) as {
+      links?: Array<{ label?: string; url?: string }>;
+    };
+    const links = parsed.links ?? [];
+    if (links.length === 0) {
+      return [{ label: "", url: "" }];
+    }
+    return links.map((link) => ({
+      label: link.label?.trim() ?? "",
+      url: link.url?.trim() ?? "",
+    }));
+  } catch {
+    return [{ label: "", url: "" }];
+  }
+}
+
+function serializeUsefulLinks(
+  links: Array<{ label: string; url: string }>,
+): string | null {
+  const filtered = links.filter((link) => link.label.trim() || link.url.trim());
+  if (filtered.length === 0) {
+    return null;
+  }
+  return JSON.stringify({
+    links: filtered.map((link) => ({
+      label: link.label.trim(),
+      url: link.url.trim(),
+    })),
+  });
 }
 
 function formatDateTime(value: string | null | undefined): string {

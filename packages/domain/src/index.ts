@@ -70,6 +70,7 @@ export interface Organization {
   workspaceId: Id;
   name: string;
   kind: OrganizationKind;
+  logoPath?: string | null;
   isActive: boolean;
   createdAt: Timestamp;
   updatedAt: Timestamp;
@@ -397,6 +398,7 @@ export const sampleWorkItemDependencies: WorkItemDependency[] = [
     toWorkItemId: "wi-1",
     dependencyType: "blocks",
     createdAt: now,
+    updatedAt: now,
   },
 ];
 
@@ -466,4 +468,5 @@ export const sampleRepositoryIdentities: RepositoryIdentity[] = [
   },
 ];
 
+export * from "./context";
 export * from "./sync";

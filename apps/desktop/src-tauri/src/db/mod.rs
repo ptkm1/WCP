@@ -216,7 +216,7 @@ pub fn fetch_work_item_by_id(
 pub fn fetch_projects(db_path: &Path) -> Result<Vec<ProjectListItemDto>, String> {
     let rows = sqlite_json(
         db_path,
-        "SELECT id, name, organization_id FROM projects WHERE is_active = 1 ORDER BY name ASC;",
+        "SELECT id, name, organization_id, description, is_active FROM projects WHERE is_active = 1 ORDER BY name ASC;",
     )?;
 
     Ok(rows
@@ -225,8 +225,175 @@ pub fn fetch_projects(db_path: &Path) -> Result<Vec<ProjectListItemDto>, String>
             id: get_string(&row, "id").unwrap_or_default(),
             name: get_string(&row, "name").unwrap_or_default(),
             organization_id: get_optional_string(&row, "organization_id"),
+            description: get_optional_string(&row, "description"),
+            is_active: get_i64(&row, "is_active").unwrap_or(1) == 1,
         })
         .collect())
+}
+
+pub fn fetch_project_by_id(
+    db_path: &Path,
+    project_id: &str,
+) -> Result<Option<ProjectListItemDto>, String> {
+    let rows = sqlite_json(
+        db_path,
+        &format!(
+            "SELECT id, name, organization_id, description, is_active
+             FROM projects
+             WHERE id = '{}'
+             LIMIT 1;",
+            escape_sql(project_id)
+        ),
+    )?;
+
+    Ok(rows.into_iter().next().map(|row| ProjectListItemDto {
+        id: get_string(&row, "id").unwrap_or_default(),
+        name: get_string(&row, "name").unwrap_or_default(),
+        organization_id: get_optional_string(&row, "organization_id"),
+        description: get_optional_string(&row, "description"),
+        is_active: get_i64(&row, "is_active").unwrap_or(1) == 1,
+    }))
+}
+
+pub fn insert_project(
+    db_path: &Path,
+    organization_id: &str,
+    name: &str,
+    description: Option<&str>,
+) -> Result<ProjectListItemDto, String> {
+    let org_rows = sqlite_json(
+        db_path,
+        &format!(
+            "SELECT id FROM organizations WHERE id = '{}' AND is_active = 1 LIMIT 1;",
+            escape_sql(organization_id)
+        ),
+    )?;
+    if org_rows.is_empty() {
+        return Err("Empresa nao encontrada.".to_string());
+    }
+
+    let workspace_id = resolve_primary_workspace_id(db_path)?;
+    let project_id = format!("proj-{}", crate::util::unix_timestamp_millis()?);
+    let now = crate::util::iso_now()?;
+
+    sqlite_exec(
+        db_path,
+        &format!(
+            "INSERT INTO projects (
+              id, workspace_id, organization_id, name, description, is_active, created_at, updated_at
+            ) VALUES (
+              '{}', '{}', '{}', '{}', {}, 1, '{}', '{}'
+            );",
+            escape_sql(&project_id),
+            escape_sql(&workspace_id),
+            escape_sql(organization_id),
+            escape_sql(name),
+            nullable_sql(description),
+            escape_sql(&now),
+            escape_sql(&now)
+        ),
+    )?;
+
+    fetch_project_by_id(db_path, &project_id)?
+        .ok_or_else(|| "Nao foi possivel carregar o projeto criado.".to_string())
+}
+
+pub fn update_project_record(
+    db_path: &Path,
+    project_id: &str,
+    name: Option<&str>,
+    description: Option<&str>,
+    is_active: Option<bool>,
+) -> Result<ProjectListItemDto, String> {
+    let existing = fetch_project_by_id(db_path, project_id)?
+        .ok_or_else(|| "Projeto nao encontrado.".to_string())?;
+
+    let resolved_name = name
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .unwrap_or(existing.name);
+    let resolved_description = description.map(str::trim).filter(|value| !value.is_empty());
+    let resolved_active = is_active.unwrap_or(existing.is_active);
+    let now = crate::util::iso_now()?;
+
+    sqlite_exec(
+        db_path,
+        &format!(
+            "UPDATE projects
+             SET name = '{}',
+                 description = {},
+                 is_active = {},
+                 updated_at = '{}'
+             WHERE id = '{}';",
+            escape_sql(&resolved_name),
+            nullable_sql(resolved_description),
+            if resolved_active { 1 } else { 0 },
+            escape_sql(&now),
+            escape_sql(project_id)
+        ),
+    )?;
+
+    fetch_project_by_id(db_path, project_id)?
+        .ok_or_else(|| "Nao foi possivel carregar o projeto atualizado.".to_string())
+}
+
+pub fn update_repository_context(
+    db_path: &Path,
+    repository_id: &str,
+    organization_id: &str,
+    project_id: Option<&str>,
+) -> Result<RepositoryListItemDto, String> {
+    let org = crate::db::organizations::fetch_organization_by_id(db_path, organization_id)?
+        .ok_or_else(|| "Empresa nao encontrada.".to_string())?;
+
+    let now = crate::util::iso_now()?;
+    sqlite_exec(
+        db_path,
+        &format!(
+            "UPDATE repositories
+             SET organization_id = '{}',
+                 project_id = {},
+                 updated_at = '{}'
+             WHERE id = '{}';",
+            escape_sql(organization_id),
+            nullable_sql(project_id),
+            escape_sql(&now),
+            escape_sql(repository_id)
+        ),
+    )?;
+
+    let profile_id = org.environment_profile_id.as_deref();
+    let git_user_name = org.git_user_name.as_deref();
+    let git_user_email = org.git_user_email.as_deref();
+    let ssh_host_alias = org.ssh_host_alias.as_deref();
+    let organization_name = org.name.as_str();
+
+    sqlite_exec(
+        db_path,
+        &format!(
+            "UPDATE repository_identities
+             SET environment_profile_id = {},
+                 git_user_name = {},
+                 git_user_email = {},
+                 ssh_host_alias = {},
+                 provider_username = {},
+                 provider_account_label = {},
+                 updated_at = '{}'
+             WHERE repository_id = '{}';",
+            nullable_sql(profile_id),
+            nullable_sql(git_user_name),
+            nullable_sql(git_user_email),
+            nullable_sql(ssh_host_alias),
+            nullable_sql(git_user_name),
+            nullable_sql(Some(organization_name)),
+            escape_sql(&now),
+            escape_sql(repository_id)
+        ),
+    )?;
+
+    fetch_repository_by_id(db_path, repository_id)?
+        .ok_or_else(|| "Nao foi possivel carregar o repositorio atualizado.".to_string())
 }
 
 pub fn insert_work_item(
@@ -671,7 +838,11 @@ mod organizations;
 mod search;
 
 pub use history::list_context_history;
-pub use organizations::fetch_organizations;
+pub use organizations::{
+    clear_organization_logo, fetch_organization_by_id, fetch_organizations, insert_organization,
+    read_organization_logo_data_url, set_organization_logo, update_environment_profile_for_org,
+    update_organization_record,
+};
 pub use search::search_local_history;
 
 fn map_artifact_row(row: &Value) -> ArtifactDto {

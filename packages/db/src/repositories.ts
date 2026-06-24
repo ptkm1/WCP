@@ -6,19 +6,34 @@ import type {
   WorkItemStatus,
 } from "@wcp/domain";
 import {
+  buildWorkContextEntityRefs,
   formatSourceTypeLabel,
   getEntitySyncScope,
+  validateWorkContextLinks,
   type SyncEntityName,
   type SyncScope,
 } from "@wcp/domain";
 import { execute, queryJson } from "./client";
 
 export {
+  buildContextChainLabel,
+  buildWorkContextEntityRefs,
   formatSourceTypeLabel,
   getEntitySyncScope,
+  listOrganizationContextGaps,
+  resolveEffectiveGitIdentity,
+  resolveGitIdentitySource,
+  resolveWorkContextLinks,
+  validateWorkContextLinks,
+  type ContextValidationIssue,
+  type GitContextGroup,
+  type GitIdentitySource,
+  type ResolvedWorkContext,
   type SyncEntityName,
   type SyncScope,
-};
+  type WorkContextEntityRefs,
+  type WorkContextLinksInput,
+} from "@wcp/domain";
 
 export interface WorkItemRecord extends WorkItem {}
 export interface RepositoryRecord extends Repository {}
@@ -528,51 +543,14 @@ export function validateWorkItemContextLinks(
   input: WorkItemContextLinkInput,
   refs: WorkItemContextEntityRefs,
 ): string[] {
-  const errors: string[] = [];
-  const organizationId = input.organizationId?.trim() || null;
-  const projectId = input.projectId?.trim() || null;
-  const repositoryId = input.primaryRepositoryId?.trim() || null;
-  let resolvedOrganizationId = organizationId;
-
-  if (projectId) {
-    const project = refs.projects.get(projectId);
-    if (!project) {
-      errors.push("Projeto nao encontrado.");
-    } else if (
-      resolvedOrganizationId &&
-      project.organizationId &&
-      project.organizationId !== resolvedOrganizationId
-    ) {
-      errors.push("O projeto selecionado pertence a outra empresa.");
-    } else if (!resolvedOrganizationId && project.organizationId) {
-      resolvedOrganizationId = project.organizationId;
-    }
-  }
-
-  if (repositoryId) {
-    const repository = refs.repositories.get(repositoryId);
-    if (!repository) {
-      errors.push("Repositorio nao encontrado.");
-    } else {
-      if (
-        resolvedOrganizationId &&
-        repository.organizationId &&
-        repository.organizationId !== resolvedOrganizationId
-      ) {
-        errors.push("Repositorio pertence a outra empresa.");
-      }
-
-      if (
-        projectId &&
-        repository.projectId &&
-        repository.projectId !== projectId
-      ) {
-        errors.push("Repositorio nao esta vinculado ao projeto selecionado.");
-      }
-    }
-  }
-
-  return errors;
+  return validateWorkContextLinks(
+    {
+      organizationId: input.organizationId,
+      projectId: input.projectId,
+      repositoryId: input.primaryRepositoryId,
+    },
+    refs,
+  ).map((issue) => issue.message);
 }
 
 function toBoolean(value: string | number | null): boolean {
