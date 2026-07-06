@@ -1,5 +1,6 @@
 mod dashboard;
 mod dialog;
+mod entities;
 mod git;
 mod history;
 mod integrations;
@@ -14,6 +15,7 @@ pub use git::{
     apply_repository_full_context, apply_repository_identity, fix_repository_remote_ssh_alias,
     get_repository_hook_status, install_repository_pre_push_hook, remove_repository_pre_push_hook,
 };
+pub use entities::{delete_organization, delete_project, delete_repository};
 pub use integrations::{
     delete_integration_connection, get_deadline_alerts, list_clickup_teams,
     list_integration_connections, notify_deadline_alerts, save_integration_connection,

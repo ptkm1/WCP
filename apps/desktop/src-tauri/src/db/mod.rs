@@ -838,11 +838,15 @@ fn map_note_row(row: &Value) -> KnowledgeNoteDto {
     }
 }
 
+mod deletions;
 mod history;
 pub mod integrations;
 mod organizations;
 mod search;
 
+pub use deletions::{
+    delete_organization_record, delete_project_record, delete_repository_record,
+};
 pub use history::list_context_history;
 pub use integrations::{
     deadline_alert_sent_today, delete_integration_connection, empty_sync_result,

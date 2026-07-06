@@ -18,7 +18,7 @@ import {
   Search,
   type LucideIcon,
 } from "lucide-react";
-import type { ComponentProps, ReactNode } from "react";
+import { useEffect, type ComponentProps, type ReactNode } from "react";
 
 export type StatusKind = "ok" | "warning" | "mismatch" | string;
 
@@ -572,5 +572,106 @@ export function TimelineEntry({
       </div>
       <code className="shrink-0 text-xs text-muted-foreground">{when}</code>
     </li>
+  );
+}
+
+export function ConfirmDialog({
+  open,
+  title,
+  description,
+  confirmLabel = "Confirmar",
+  cancelLabel = "Cancelar",
+  destructive = false,
+  busy = false,
+  onConfirm,
+  onCancel,
+}: {
+  open: boolean;
+  title: string;
+  description: ReactNode;
+  confirmLabel?: string;
+  cancelLabel?: string;
+  destructive?: boolean;
+  busy?: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !busy) {
+        onCancel();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [busy, onCancel, open]);
+
+  if (!open) {
+    return null;
+  }
+
+  return (
+    <div
+      className="confirmDialogOverlay"
+      role="presentation"
+      onClick={() => {
+        if (!busy) {
+          onCancel();
+        }
+      }}
+    >
+      <div
+        className="confirmDialogPanel panel"
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="confirm-dialog-title"
+        aria-describedby="confirm-dialog-description"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="confirmDialogHeader">
+          <AlertTriangle
+            className={cn(
+              "h-5 w-5",
+              destructive ? "text-destructive" : "text-primary",
+            )}
+            aria-hidden
+          />
+          <h2 id="confirm-dialog-title" className="confirmDialogTitle">
+            {title}
+          </h2>
+        </div>
+        <div
+          id="confirm-dialog-description"
+          className="confirmDialogDescription"
+        >
+          {description}
+        </div>
+        <div className="confirmDialogActions">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={onCancel}
+            disabled={busy}
+          >
+            {cancelLabel}
+          </Button>
+          <Button
+            type="button"
+            variant={destructive ? "destructive" : "default"}
+            onClick={onConfirm}
+            disabled={busy}
+          >
+            {busy ? "Excluindo..." : confirmLabel}
+          </Button>
+        </div>
+      </div>
+    </div>
   );
 }

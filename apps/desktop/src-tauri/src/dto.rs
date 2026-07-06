@@ -551,6 +551,13 @@ pub struct DeadlineAlertItemDto {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct DeleteEntityResultDto {
+    pub entity_type: String,
+    pub deleted_id: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DeadlineAlertsDto {
     pub overdue: Vec<DeadlineAlertItemDto>,
     pub due_today: Vec<DeadlineAlertItemDto>,

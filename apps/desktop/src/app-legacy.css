@@ -7,7 +7,9 @@
 }
 
 .shell {
-  max-width: 1120px;
+  width: 90vw;
+  max-width: 90vw;
+  min-width: min(90vw, 100%);
 }
 
 .appHeader {
@@ -877,6 +879,69 @@
   color: #d4d4d8;
   font-size: 0.92rem;
   line-height: 1.5;
+}
+
+.orgDangerZone {
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid rgba(239, 68, 68, 0.2);
+}
+
+.confirmDialogOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.72);
+  backdrop-filter: blur(4px);
+}
+
+.confirmDialogPanel {
+  width: min(100%, 480px);
+  margin: 0;
+  display: grid;
+  gap: 16px;
+}
+
+.confirmDialogHeader {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.confirmDialogTitle {
+  margin: 0;
+  font-size: 1.15rem;
+  line-height: 1.35;
+}
+
+.confirmDialogDescription {
+  color: #d4d4d8;
+  font-size: 0.95rem;
+  line-height: 1.55;
+}
+
+.confirmDialogActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.orgDangerZone .subheading,
+.orgDangerZone h3 {
+  color: #fca5a5;
+}
+
+.repoDetailHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
 }
 
 .orgIntegrationsPanel {
@@ -1770,6 +1835,8 @@
 
 @media (max-width: 700px) {
   .shell {
+    width: 100%;
+    max-width: 100%;
     padding-top: 20px;
   }
 

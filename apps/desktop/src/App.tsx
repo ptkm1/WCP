@@ -1,4 +1,5 @@
 import {
+  ConfirmDialog,
   ContextStepsBar,
   FilterTabs,
   HistoryEventButton,
@@ -47,6 +48,7 @@ import {
   Plus,
   Save,
   ScanSearch,
+  Trash2,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
@@ -1045,6 +1047,14 @@ export function App() {
   const [orgEditName, setOrgEditName] = useState("");
   const [orgEditKind, setOrgEditKind] = useState("company");
   const [orgSetupBusy, setOrgSetupBusy] = useState(false);
+  const [confirmDialog, setConfirmDialog] = useState<{
+    title: string;
+    description: string;
+    confirmLabel?: string;
+    destructive?: boolean;
+    onConfirm: () => void | Promise<void>;
+  } | null>(null);
+  const [confirmDialogBusy, setConfirmDialogBusy] = useState(false);
   const [orgSetupError, setOrgSetupError] = useState<string | null>(null);
   const [orgSetupSuccess, setOrgSetupSuccess] = useState<string | null>(null);
   const [orgEnvFormDirty, setOrgEnvFormDirty] = useState(false);
@@ -2652,6 +2662,27 @@ export function App() {
     handleOrganizationChange("all");
   }
 
+  function closeConfirmDialog() {
+    if (confirmDialogBusy) {
+      return;
+    }
+    setConfirmDialog(null);
+  }
+
+  async function handleConfirmDialog() {
+    if (!confirmDialog || confirmDialogBusy) {
+      return;
+    }
+
+    try {
+      setConfirmDialogBusy(true);
+      await confirmDialog.onConfirm();
+      setConfirmDialog(null);
+    } finally {
+      setConfirmDialogBusy(false);
+    }
+  }
+
   async function handleCreateOrganization() {
     const trimmedName = newOrgName.trim();
     if (!trimmedName) {
@@ -2895,22 +2926,123 @@ export function App() {
     }
   }
 
-  async function handleArchiveOrgProject(projectId: string) {
-    try {
-      setOrgSetupBusy(true);
-      setOrgSetupError(null);
-      await invoke("update_project", {
-        projectId,
-        isActive: false,
-      });
-      await reloadProjects();
-    } catch (archiveError) {
-      setOrgSetupError(
-        extractErrorMessage(archiveError, "Falha ao arquivar projeto"),
-      );
-    } finally {
-      setOrgSetupBusy(false);
+  function handleDeleteOrgProject(project: ProjectListItemDto) {
+    setConfirmDialog({
+      title: `Excluir projeto "${project.name}"?`,
+      description:
+        "Repositorios vinculados precisam ser removidos antes. Tarefas ficam sem projeto.",
+      confirmLabel: "Excluir projeto",
+      destructive: true,
+      onConfirm: async () => {
+        try {
+          setOrgSetupBusy(true);
+          setOrgSetupError(null);
+          setOrgSetupSuccess(null);
+          await invoke("delete_project", { projectId: project.id });
+          await reloadProjects();
+          setOrgSetupSuccess(`Projeto "${project.name}" excluido.`);
+        } catch (deleteError) {
+          setOrgSetupError(
+            extractErrorMessage(deleteError, "Falha ao excluir projeto"),
+          );
+        } finally {
+          setOrgSetupBusy(false);
+        }
+      },
+    });
+  }
+
+  function handleDeleteRepository(repository: RepositoryListItemDto) {
+    setConfirmDialog({
+      title: `Excluir repositorio "${repository.name}"?`,
+      description:
+        "Remove o cadastro do WCP. A pasta local no disco nao sera apagada.",
+      confirmLabel: "Excluir repositorio",
+      destructive: true,
+      onConfirm: async () => {
+        try {
+          setOrgSetupBusy(true);
+          setOrgSetupError(null);
+          setOrgSetupSuccess(null);
+          await invoke("delete_repository", { repositoryId: repository.id });
+          const repoList = await reloadRepositories();
+          await refreshDashboard();
+
+          if (selectedRepoId === repository.id) {
+            const nextRepo =
+              repoList.find(
+                (entry) => entry.organizationId === repository.organizationId,
+              ) ?? repoList[0];
+            setSelectedRepoId(nextRepo?.id ?? null);
+          }
+          if (orgIdentityRepoId === repository.id) {
+            setOrgIdentityRepoId(null);
+          }
+          if (reassignRepoId === repository.id) {
+            setReassignRepoId("");
+          }
+
+          setOrgSetupSuccess(`Repositorio "${repository.name}" excluido.`);
+        } catch (deleteError) {
+          setOrgSetupError(
+            extractErrorMessage(deleteError, "Falha ao excluir repositorio"),
+          );
+        } finally {
+          setOrgSetupBusy(false);
+        }
+      },
+    });
+  }
+
+  function handleDeleteOrganization() {
+    if (!orgSetupSelectedId || !orgSetupOrganization) {
+      return;
     }
+
+    const organizationName = orgSetupOrganization.name;
+    const deletedOrganizationId = orgSetupSelectedId;
+
+    setConfirmDialog({
+      title: `Excluir empresa "${organizationName}"?`,
+      description:
+        "Isso remove projetos, repositorios, tarefas, integracoes e historico vinculados. Nao da para desfazer.",
+      confirmLabel: "Excluir empresa",
+      destructive: true,
+      onConfirm: async () => {
+        try {
+          setOrgSetupBusy(true);
+          setOrgSetupError(null);
+          setOrgSetupSuccess(null);
+          await invoke("delete_organization", {
+            organizationId: deletedOrganizationId,
+          });
+
+          const [orgList] = await Promise.all([
+            reloadOrganizations(),
+            reloadProjects(),
+            reloadRepositories(),
+          ]);
+          await refreshDashboard();
+
+          const nextOrgId = orgList[0]?.id ?? null;
+          setOrgSetupSelectedId(nextOrgId);
+          if (
+            selectedOrganizationId !== "all" &&
+            selectedOrganizationId === deletedOrganizationId
+          ) {
+            setSelectedOrganizationId(nextOrgId ?? "all");
+          }
+
+          setOrgSetupSuccess(`Empresa "${organizationName}" excluida.`);
+        } catch (deleteError) {
+          setOrgSetupError(
+            extractErrorMessage(deleteError, "Falha ao excluir empresa"),
+          );
+        } finally {
+          setOrgSetupBusy(false);
+        }
+      },
+    });
   }
 
   async function handleOrgLinkRepository() {
@@ -4221,7 +4353,7 @@ export function App() {
 
   if (loading) {
     return (
-      <main className="mx-auto max-w-6xl px-6 py-8 pb-20">
+      <main className="shell mx-auto px-6 py-8 pb-20">
         <header className="mb-7 border-b border-border pb-5">
           <div className="grid gap-1">
             <span className="text-2xl font-semibold tracking-tight text-foreground">
@@ -4243,7 +4375,7 @@ export function App() {
 
   if (error || !data) {
     return (
-      <main className="mx-auto max-w-6xl px-6 py-8 pb-20">
+      <main className="shell mx-auto px-6 py-8 pb-20">
         <header className="mb-7 border-b border-border pb-5">
           <div className="grid gap-1">
             <span className="text-2xl font-semibold tracking-tight text-foreground">
@@ -4278,2838 +4410,2790 @@ export function App() {
             : "Projetos";
 
   return (
-    <main className="shell mx-auto max-w-6xl px-6 py-8 pb-20">
-      <header className="appHeader mb-7 border-b border-border pb-5">
-        <div className="appHeaderTop mb-4 flex flex-wrap items-start justify-between gap-4">
-          <div className="appBrand grid gap-1">
-            <span className="appName text-2xl font-semibold tracking-tight text-foreground">
-              Contexto
-            </span>
-            <span className="appTagline text-sm text-muted-foreground">
-              Seu assistente de trabalho
-            </span>
-          </div>
-          {headerFocusTask ? (
-            <Card className="max-w-sm border-primary/30 bg-card/80 shadow-glow">
-              <CardContent className="grid gap-2 p-4">
-                <Badge
-                  variant="secondary"
-                  className="w-fit text-[11px] uppercase tracking-wide"
-                >
-                  {data?.activeSession
-                    ? "Foco agora · sessao ativa"
-                    : "Foco agora"}
-                </Badge>
-                <strong className="text-sm leading-snug">
-                  {headerFocusTask.title}
-                </strong>
-                {headerFocusTask.primaryRepositoryId ? (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="w-fit"
-                    onClick={() =>
-                      openContextForRepository(
-                        headerFocusTask.primaryRepositoryId!,
-                        headerFocusTask.organizationId,
-                      )
-                    }
-                  >
-                    <GitBranch className="h-4 w-4" aria-hidden />
-                    Ir para contexto
-                  </Button>
-                ) : null}
-              </CardContent>
-            </Card>
-          ) : null}
-        </div>
-
-        <section className="globalSearch relative">
-          <SearchField
-            type="search"
-            className="h-11 rounded-2xl bg-background/80"
-            placeholder="Buscar em tarefas, notas, sessoes e projetos..."
-            value={searchQuery}
-            onChange={(event) => setSearchQuery(event.target.value)}
-            aria-label="Busca global no historico local"
-          />
-          {searchOpen ? (
-            <div
-              className="searchResultsPanel"
-              role="listbox"
-              aria-label="Resultados da busca"
-            >
-              {searchBusy ? (
-                <p className="searchResultsStatus">Buscando...</p>
-              ) : null}
-              {!searchBusy && groupedSearchResults.length === 0 ? (
-                <p className="searchResultsStatus">
-                  Nenhum resultado para &quot;{searchQuery.trim()}&quot;
-                </p>
-              ) : null}
-              {searchQuery.trim().length >= 2 ? (
-                <div className="searchResultsFooter">
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    className="searchOpenHistoryButton w-full"
-                    onClick={openGlobalSearchInHistory}
-                  >
-                    <History className="h-4 w-4" aria-hidden />
-                    Ver tudo no Historico
-                  </Button>
-                </div>
-              ) : null}
-              {groupedSearchResults.map((group) => {
-                const GroupIcon = getSearchKindIcon(group.kind);
-
-                return (
-                  <div key={group.kind} className="searchGroup">
-                    <h3 className="searchGroupTitle inline-flex items-center gap-2">
-                      <GroupIcon
-                        className="h-4 w-4 text-muted-foreground"
-                        aria-hidden
-                      />
-                      {group.label}
-                    </h3>
-                    {group.items.map((item) => (
-                      <SearchResultButton
-                        key={`${item.kind}-${item.id}`}
-                        kind={item.kind}
-                        onClick={() => handleSearchResultClick(item)}
-                        title={item.title}
-                        detail={
-                          item.detail
-                            ? truncateSearchDetail(item.detail)
-                            : undefined
-                        }
-                        meta={`${normalizeSearchLabel(item.kind)}${
-                          item.createdAt
-                            ? ` · ${formatDateTime(item.createdAt)}`
-                            : ""
-                        }`}
-                      />
-                    ))}
-                  </div>
-                );
-              })}
+    <>
+      <main className="shell mx-auto px-6 py-8 pb-20">
+        <header className="appHeader mb-7 border-b border-border pb-5">
+          <div className="appHeaderTop mb-4 flex flex-wrap items-start justify-between gap-4">
+            <div className="appBrand grid gap-1">
+              <span className="appName text-2xl font-semibold tracking-tight text-foreground">
+                Contexto
+              </span>
+              <span className="appTagline text-sm text-muted-foreground">
+                Seu assistente de trabalho
+              </span>
             </div>
-          ) : null}
-        </section>
-
-        <div className="mt-4" aria-label="Navegacao principal">
-          <MainViewTabs
-            value={activeView}
-            onValueChange={(view) => switchActiveView(view)}
-          />
-        </div>
-      </header>
-
-      <PageHeader
-        view={activeView}
-        title={pageTitle}
-        hint={VIEW_PAGE_HINT[activeView]}
-      />
-
-      {activeView === "today" ? (
-        <>
-          <section className="panel">
-            <div className="dayOverview">
-              {todayDayBrief ? (
-                <section className="daySummary" aria-label="Resumo do dia">
-                  <p className="dayBriefLine dayBriefLine-muted">
-                    {todayDayBrief.line1}
-                  </p>
-                  <p className="dayBriefLine dayBriefLine-strong">
-                    {todayDayBrief.line2}
-                  </p>
-                </section>
-              ) : null}
-
-              <section
-                className={`nextActionPanel nextActionPanel-${data.todayFocus.focusKind}`}
-                aria-label="Proxima acao"
-              >
-                {data.activeSession ? (
-                  <div className="sessionDominantBar">
-                    <StatusBadge variant="live">Em foco</StatusBadge>
-                    <span>
-                      {data.todayFocus.sessionGoal?.trim() ||
-                        data.activeSession.goal?.trim() ||
-                        data.todayFocus.headline}
-                    </span>
-                    <span className="sessionDominantMeta muted">
-                      {formatDateTime(data.activeSession.startedAt)}
-                      {data.activeSession.branchName
-                        ? ` · ${data.activeSession.branchName}`
-                        : ""}
-                    </span>
-                  </div>
-                ) : null}
-
-                <div className="todayContextChips">
-                  <Badge variant="secondary">{todayFocusKindLabel}</Badge>
-                  <Badge variant="outline">P{todayFocusPriority}</Badge>
-                  {data.todayFocus.primaryRepositoryName ? (
-                    <Badge variant="outline">
-                      {data.todayFocus.primaryRepositoryName}
-                    </Badge>
-                  ) : null}
-                </div>
-
-                {data.todayFocus.focusKind === "unblock" &&
-                data.todayFocus.blockerLabel ? (
-                  <StatusAlert
-                    status="warning"
-                    title="Bloqueio"
-                    className="nextActionAlert"
+            {headerFocusTask ? (
+              <Card className="max-w-sm border-primary/30 bg-card/80 shadow-glow">
+                <CardContent className="grid gap-2 p-4">
+                  <Badge
+                    variant="secondary"
+                    className="w-fit text-[11px] uppercase tracking-wide"
                   >
-                    {data.todayFocus.blockerLabel}
-                  </StatusAlert>
-                ) : null}
-
-                {data.todayFocus.focusKind === "unblock" &&
-                data.todayFocus.dependencyLabel ? (
-                  <StatusAlert
-                    status="warning"
-                    title="Dependencia"
-                    className="nextActionAlert"
-                  >
-                    {data.todayFocus.dependencyLabel}
-                  </StatusAlert>
-                ) : null}
-
-                <div className="nextActionHeader">
-                  <span className="nextActionEyebrow">Proxima acao</span>
-                  <h2 className="nextActionStep">{data.todayFocus.nextStep}</h2>
-                  {data.todayFocus.headline &&
-                  data.todayFocus.headline !== data.todayFocus.nextStep ? (
-                    <p className="nextActionHeadline muted">
-                      {data.todayFocus.headline}
-                    </p>
-                  ) : null}
-                </div>
-
-                {data.todayFocus.focusKind !== "unblock" &&
-                data.todayFocus.blockerLabel ? (
-                  <StatusAlert
-                    status="warning"
-                    title="Bloqueio"
-                    className="nextActionAlert"
-                  >
-                    {data.todayFocus.blockerLabel}
-                  </StatusAlert>
-                ) : null}
-
-                {data.todayFocus.focusKind !== "unblock" &&
-                data.todayFocus.dependencyLabel ? (
-                  <StatusAlert
-                    status="warning"
-                    title="Dependencia"
-                    className="nextActionAlert"
-                  >
-                    {data.todayFocus.dependencyLabel}
-                  </StatusAlert>
-                ) : null}
-
-                {data.todayFocus.resumeHint ? (
-                  <p className="nextActionResume muted">
-                    Retomada: {data.todayFocus.resumeHint}
-                  </p>
-                ) : null}
-
-                <div className="actionRow">
-                  <Button type="button" onClick={handleNextActionPrimary}>
-                    {getNextActionPrimaryLabel()}
-                  </Button>
-                  {data.todayFocus.primaryRepositoryId ? (
+                    {data?.activeSession
+                      ? "Foco agora · sessao ativa"
+                      : "Foco agora"}
+                  </Badge>
+                  <strong className="text-sm leading-snug">
+                    {headerFocusTask.title}
+                  </strong>
+                  {headerFocusTask.primaryRepositoryId ? (
                     <Button
                       type="button"
                       variant="outline"
+                      size="sm"
+                      className="w-fit"
                       onClick={() =>
                         openContextForRepository(
-                          data.todayFocus.primaryRepositoryId!,
-                          data.currentTask?.organizationId,
+                          headerFocusTask.primaryRepositoryId!,
+                          headerFocusTask.organizationId,
                         )
                       }
                     >
-                      Ir para{" "}
-                      {data.todayFocus.primaryRepositoryName ?? "projeto"}
+                      <GitBranch className="h-4 w-4" aria-hidden />
+                      Ir para contexto
                     </Button>
                   ) : null}
-                </div>
-              </section>
+                </CardContent>
+              </Card>
+            ) : null}
+          </div>
 
-              {todayStatusChips.length > 0 ? (
-                <div
-                  className="todayContextChips todayStatusChips"
-                  aria-label="Sinais do dia"
-                >
-                  {todayStatusChips.map((chip) => (
-                    <Badge key={chip} variant="outline">
-                      {chip}
-                    </Badge>
-                  ))}
-                </div>
-              ) : null}
-
-              <div className="dayMetrics">
-                <article className="dayMetric">
-                  <span>Prontas para fazer</span>
-                  <strong>{data.summary.executableCount}</strong>
-                </article>
-                <article className="dayMetric">
-                  <span>Em andamento</span>
-                  <strong>{data.summary.doingCount}</strong>
-                </article>
-                <article className="dayMetric">
-                  <span>Bloqueadas</span>
-                  <strong>{data.summary.blockedCount}</strong>
-                </article>
-              </div>
-
-              {deadlineAlerts && deadlineAlerts.items.length > 0 ? (
-                <section
-                  className="integrationDeadlines"
-                  aria-label="Prazos das integracoes"
-                >
-                  <h3 className="subheading">Prazos das integracoes</h3>
-                  <ul className="historyList integrationDeadlineList">
-                    {deadlineAlerts.items.map((alert) => (
-                      <li key={`${alert.workItemId}-${alert.kind}`}>
-                        <div>
-                          <strong>{alert.title}</strong>
-                          <span>
-                            {formatDeadlineAlertKind(alert.kind)} ·{" "}
-                            {formatDateTime(alert.scheduledFor)}
-                            {alert.externalProvider
-                              ? ` · ${formatPmProviderLabel(alert.externalProvider)}`
-                              : ""}
-                          </span>
-                        </div>
-                        {alert.externalUrl ? (
-                          <a
-                            className="externalTaskLink"
-                            href={alert.externalUrl}
-                            target="_blank"
-                            rel="noreferrer"
-                          >
-                            Abrir
-                          </a>
-                        ) : null}
-                      </li>
-                    ))}
-                  </ul>
-                </section>
-              ) : null}
-
-              <div className="quickLinks">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => setActiveView("backlog")}
-                >
-                  Ver tarefas
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => setActiveView("repos")}
-                >
-                  Ver projetos
-                </Button>
-              </div>
-            </div>
-          </section>
-
-          <section
-            ref={sessionPanelRef}
-            className="panel focusPanel sessionPanel"
-          >
-            <div className="sessionHeader">
-              <div className="panelHeading">
-                <h2>Foco agora</h2>
-                <p className="muted">
-                  {data.activeSession
-                    ? "Registre o resultado da sessao abaixo."
-                    : "Registre o que pretende fazer neste bloco de trabalho."}
-                </p>
-              </div>
-              <StatusBadge variant={data.activeSession ? "live" : "idle"}>
-                {data.activeSession ? "Em foco" : "Parado"}
-              </StatusBadge>
-            </div>
-
-            {!data.activeSession ? (
-              <div className="sessionForm">
-                <label>
-                  O que voce vai fazer?
-                  <Textarea
-                    value={sessionGoal}
-                    onChange={(event) => setSessionGoal(event.target.value)}
-                    placeholder="Ex.: corrigir o bug do login antes do deploy"
-                  />
-                </label>
-                <div className="actionRow">
-                  <Button
-                    type="button"
-                    onClick={handleStartSession}
-                    disabled={sessionBusy || !selectedTaskId}
-                  >
-                    {sessionBusy ? "Iniciando..." : "Comecar foco"}
-                  </Button>
-                </div>
-              </div>
-            ) : (
-              <div className="sessionForm">
-                <label>
-                  O que saiu disso?
-                  <Textarea
-                    value={sessionResult}
-                    onChange={(event) => setSessionResult(event.target.value)}
-                    placeholder="Ex.: bug corrigido e testado localmente"
-                  />
-                </label>
-                <label>
-                  Decisoes importantes
-                  <Textarea
-                    value={sessionDecisions}
-                    onChange={(event) =>
-                      setSessionDecisions(event.target.value)
-                    }
-                    placeholder="Ex.: manter a validacao no backend por enquanto"
-                  />
-                </label>
-                <div className="actionRow">
-                  <Button
-                    type="button"
-                    onClick={handleEndSession}
-                    disabled={sessionBusy}
-                  >
-                    {sessionBusy ? "Encerrando..." : "Encerrar foco"}
-                  </Button>
-                </div>
-              </div>
-            )}
-          </section>
-
-          {data.todayPlan.length > 0 ? (
-            <section className="panel">
-              <div className="panelHeading">
-                <h2>Proximos passos</h2>
-                <p className="muted">Sugestoes do que atacar em seguida.</p>
-              </div>
-              <ul className="taskList">
-                {data.todayPlan.map((item) => {
-                  const workItem = planMap.get(item.workItemId);
-                  return (
-                    <li
-                      key={item.id}
-                      className={
-                        item.isCommitted ? "taskListItem-committed" : undefined
-                      }
+          <section className="globalSearch relative">
+            <SearchField
+              type="search"
+              className="h-11 rounded-2xl bg-background/80"
+              placeholder="Buscar em tarefas, notas, sessoes e projetos..."
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              aria-label="Busca global no historico local"
+            />
+            {searchOpen ? (
+              <div
+                className="searchResultsPanel"
+                role="listbox"
+                aria-label="Resultados da busca"
+              >
+                {searchBusy ? (
+                  <p className="searchResultsStatus">Buscando...</p>
+                ) : null}
+                {!searchBusy && groupedSearchResults.length === 0 ? (
+                  <p className="searchResultsStatus">
+                    Nenhum resultado para &quot;{searchQuery.trim()}&quot;
+                  </p>
+                ) : null}
+                {searchQuery.trim().length >= 2 ? (
+                  <div className="searchResultsFooter">
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      className="searchOpenHistoryButton w-full"
+                      onClick={openGlobalSearchInHistory}
                     >
-                      <div>
-                        <strong>
-                          {item.position}. {workItem?.title}
-                        </strong>
-                        <PlanStatusBadge committed={item.isCommitted}>
-                          {item.isCommitted ? "Comprometida hoje" : "Sugestao"}
-                        </PlanStatusBadge>
-                      </div>
-                      <span>{formatTaskStatus(workItem?.status ?? "-")}</span>
-                    </li>
+                      <History className="h-4 w-4" aria-hidden />
+                      Ver tudo no Historico
+                    </Button>
+                  </div>
+                ) : null}
+                {groupedSearchResults.map((group) => {
+                  const GroupIcon = getSearchKindIcon(group.kind);
+
+                  return (
+                    <div key={group.kind} className="searchGroup">
+                      <h3 className="searchGroupTitle inline-flex items-center gap-2">
+                        <GroupIcon
+                          className="h-4 w-4 text-muted-foreground"
+                          aria-hidden
+                        />
+                        {group.label}
+                      </h3>
+                      {group.items.map((item) => (
+                        <SearchResultButton
+                          key={`${item.kind}-${item.id}`}
+                          kind={item.kind}
+                          onClick={() => handleSearchResultClick(item)}
+                          title={item.title}
+                          detail={
+                            item.detail
+                              ? truncateSearchDetail(item.detail)
+                              : undefined
+                          }
+                          meta={`${normalizeSearchLabel(item.kind)}${
+                            item.createdAt
+                              ? ` · ${formatDateTime(item.createdAt)}`
+                              : ""
+                          }`}
+                        />
+                      ))}
+                    </div>
                   );
                 })}
-              </ul>
-            </section>
-          ) : null}
-
-          <section className="panel softPanel twoCol">
-            <div>
-              <div className="panelHeading">
-                <h2>Para retomar depois</h2>
-                <p className="muted">
-                  Tarefas relacionadas a{" "}
-                  <strong>
-                    {data.currentTask?.title ??
-                      currentTask?.title ??
-                      "sua selecao atual"}
-                  </strong>
-                  .
-                </p>
               </div>
-              <ul className="taskList">
-                {todayRecoverableContext.length > 0 ? (
-                  todayRecoverableContext.map((candidate) => {
-                    const workItem = planMap.get(candidate.workItemId);
-                    return (
-                      <li key={candidate.workItemId}>
-                        <div>
-                          <strong>{workItem?.title}</strong>
-                          <span>{candidate.reasons.join(" · ")}</span>
-                        </div>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          onClick={() => {
-                            setSelectedTaskId(candidate.workItemId);
-                            setActiveView("backlog");
-                          }}
-                        >
-                          Abrir
-                        </Button>
-                      </li>
-                    );
-                  })
-                ) : (
-                  <li>
-                    <div>
-                      <strong>Nada por aqui</strong>
+            ) : null}
+          </section>
+
+          <div className="mt-4" aria-label="Navegacao principal">
+            <MainViewTabs
+              value={activeView}
+              onValueChange={(view) => switchActiveView(view)}
+            />
+          </div>
+        </header>
+
+        <PageHeader
+          view={activeView}
+          title={pageTitle}
+          hint={VIEW_PAGE_HINT[activeView]}
+        />
+
+        {activeView === "today" ? (
+          <>
+            <section className="panel">
+              <div className="dayOverview">
+                {todayDayBrief ? (
+                  <section className="daySummary" aria-label="Resumo do dia">
+                    <p className="dayBriefLine dayBriefLine-muted">
+                      {todayDayBrief.line1}
+                    </p>
+                    <p className="dayBriefLine dayBriefLine-strong">
+                      {todayDayBrief.line2}
+                    </p>
+                  </section>
+                ) : null}
+
+                <section
+                  className={`nextActionPanel nextActionPanel-${data.todayFocus.focusKind}`}
+                  aria-label="Proxima acao"
+                >
+                  {data.activeSession ? (
+                    <div className="sessionDominantBar">
+                      <StatusBadge variant="live">Em foco</StatusBadge>
                       <span>
-                        Quando houver sugestoes, elas aparecem nesta lista.
+                        {data.todayFocus.sessionGoal?.trim() ||
+                          data.activeSession.goal?.trim() ||
+                          data.todayFocus.headline}
+                      </span>
+                      <span className="sessionDominantMeta muted">
+                        {formatDateTime(data.activeSession.startedAt)}
+                        {data.activeSession.branchName
+                          ? ` · ${data.activeSession.branchName}`
+                          : ""}
                       </span>
                     </div>
-                  </li>
-                )}
-              </ul>
-            </div>
+                  ) : null}
 
-            <div>
-              <div className="panelHeading">
-                <h2>Ambiente Git</h2>
-                <p className="muted">
-                  Projeto:{" "}
-                  <strong>
-                    {data.todayFocus.primaryRepositoryName ??
-                      data.guardrail?.repositoryName ??
-                      "Nenhum configurado ainda"}
-                  </strong>
-                </p>
-              </div>
-              {dashboardValidation ? (
-                <>
-                  <StatusAlert
-                    status={dashboardValidation.status}
-                    title={formatValidationStatus(dashboardValidation.status)}
-                  >
-                    Conferencia rapida da identidade local
-                  </StatusAlert>
-                  <ul className="checkList">
-                    {dashboardValidation.checks.map((check) => (
-                      <li key={check.key}>
-                        <strong>{humanizeCheckKey(check.key)}</strong>
-                        <span>{formatValidationCheckDetail(check)}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </>
-              ) : (
-                <StatusAlert status="warning" title="Ainda sem conferencia">
-                  Abra a aba Projetos para validar o ambiente Git deste repo.
-                </StatusAlert>
-              )}
-              <div className="quickLinks">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => {
-                    if (data.guardrail?.repositoryId) {
-                      openContextForRepository(
-                        data.guardrail.repositoryId,
-                        data.currentTask?.organizationId,
-                      );
-                    } else {
-                      setActiveView("repos");
-                    }
-                  }}
-                >
-                  <ArrowRightLeft className="h-4 w-4" aria-hidden />
-                  Abrir troca de contexto
-                </Button>
-              </div>
-            </div>
-          </section>
-        </>
-      ) : null}
-
-      {activeView === "backlog" ? (
-        <section className="panel backlogPanel">
-          <div className="backlogLayout">
-            <aside className="backlogSidebar">
-              <div className="backlogSidebarHeader">
-                <SectionTitle icon={ListTodo}>Suas tarefas</SectionTitle>
-                <Button type="button" size="sm" onClick={openCreateTaskForm}>
-                  <Plus className="h-4 w-4" aria-hidden />
-                  Nova tarefa
-                </Button>
-              </div>
-
-              <SearchField
-                type="search"
-                className="h-10"
-                placeholder="Buscar tarefas..."
-                value={backlogSearchQuery}
-                onChange={(event) => setBacklogSearchQuery(event.target.value)}
-                aria-label="Buscar tarefas no backlog"
-              />
-
-              <div className="backlogFilters">
-                <label className="grid gap-2 text-xs text-muted-foreground">
-                  <Label htmlFor="backlog-status-filter">Status</Label>
-                  <select
-                    id="backlog-status-filter"
-                    value={backlogStatusFilter}
-                    onChange={(event) =>
-                      setBacklogStatusFilter(event.target.value)
-                    }
-                  >
-                    {BACKLOG_STATUS_FILTERS.map((filter) => (
-                      <option key={filter.value} value={filter.value}>
-                        {filter.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="grid gap-2 text-xs text-muted-foreground">
-                  <Label htmlFor="backlog-org-filter">Empresa</Label>
-                  <select
-                    id="backlog-org-filter"
-                    value={backlogOrgFilter}
-                    onChange={(event) =>
-                      setBacklogOrgFilter(event.target.value)
-                    }
-                  >
-                    <option value="all">Todas</option>
-                    {organizations.map((organization) => (
-                      <option key={organization.id} value={organization.id}>
-                        {organization.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="grid gap-2 text-xs text-muted-foreground">
-                  <Label htmlFor="backlog-sort">Ordenar</Label>
-                  <select
-                    id="backlog-sort"
-                    value={backlogSort}
-                    onChange={(event) =>
-                      setBacklogSort(
-                        event.target.value as "priority" | "title" | "status",
-                      )
-                    }
-                  >
-                    {BACKLOG_SORT_OPTIONS.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-
-              <label className="backlogToggleArchived">
-                <input
-                  type="checkbox"
-                  checked={showArchivedBacklog}
-                  onChange={(event) =>
-                    setShowArchivedBacklog(event.target.checked)
-                  }
-                />
-                Mostrar arquivadas
-              </label>
-
-              <div className="repoList backlogList">
-                {filteredBacklog.length === 0 ? (
-                  <p className="historyEmpty">Nenhuma tarefa neste filtro.</p>
-                ) : null}
-                {filteredBacklog.map((item) => (
-                  <SelectableListItem
-                    key={item.id}
-                    active={selectedTaskId === item.id}
-                    linked={relatedDependencyIds.has(item.id)}
-                    onClick={() => selectTaskId(item.id)}
-                    title={item.title}
-                    subtitle={buildTaskPreviewLine(item)}
-                  >
-                    <Badge variant="outline">P{item.priority ?? 3}</Badge>
-                    {item.status === "blocked" ? (
-                      <StatusBadge variant="blocked">Bloqueada</StatusBadge>
-                    ) : null}
-                    {item.resumeSummary ? (
-                      <Badge variant="success">Retomada</Badge>
-                    ) : null}
-                    {item.status === "archived" ? (
-                      <Badge variant="secondary">Arquivada</Badge>
-                    ) : null}
-                    {relatedDependencyIds.has(item.id) ? (
-                      <Badge variant="outline">Relacionada</Badge>
-                    ) : null}
-                    {item.sourceType === "imported" && item.externalProvider ? (
+                  <div className="todayContextChips">
+                    <Badge variant="secondary">{todayFocusKindLabel}</Badge>
+                    <Badge variant="outline">P{todayFocusPriority}</Badge>
+                    {data.todayFocus.primaryRepositoryName ? (
                       <Badge variant="outline">
-                        Importado ·{" "}
-                        {formatPmProviderLabel(item.externalProvider)}
-                        {item.externalKey ? ` · ${item.externalKey}` : ""}
+                        {data.todayFocus.primaryRepositoryName}
                       </Badge>
                     ) : null}
-                    {item.scheduledFor ? (
-                      <Badge variant="outline">
-                        Prazo {formatDateTime(item.scheduledFor)}
-                      </Badge>
-                    ) : null}
-                    <span>{formatTaskStatus(item.status)}</span>
-                  </SelectableListItem>
-                ))}
-              </div>
-            </aside>
+                  </div>
 
-            <div className="taskDetailPanel">
-              <div className="taskDetailHeader">
-                <div className="panelHeading">
-                  <h2>
-                    {taskFormMode === "create"
-                      ? "Nova tarefa"
-                      : taskFormMode === "edit"
-                        ? "Editar tarefa"
-                        : (currentTask?.title ?? "Escolha uma tarefa")}
-                  </h2>
-                  <p className="muted">
-                    {taskFormMode
-                      ? "Preencha o essencial e salve para atualizar o backlog."
-                      : currentTask
-                        ? "Historico, notas e links desta tarefa."
-                        : "Selecione uma tarefa na lista ao lado."}
-                  </p>
-                </div>
-                {taskFormMode ? null : currentTask ? (
-                  <div className="taskDetailActions">
-                    <StatusBadge
-                      variant={
-                        currentTask.status === "blocked"
-                          ? "blocked"
-                          : currentTask.status === "doing"
-                            ? "live"
-                            : "idle"
-                      }
+                  {data.todayFocus.focusKind === "unblock" &&
+                  data.todayFocus.blockerLabel ? (
+                    <StatusAlert
+                      status="warning"
+                      title="Bloqueio"
+                      className="nextActionAlert"
                     >
-                      {formatTaskStatus(currentTask.status)}
-                    </StatusBadge>
-                    <Badge variant="outline">
-                      P{currentTask.priority ?? 3}
-                    </Badge>
-                    {currentTask.sourceType === "imported" &&
-                    currentTask.externalProvider ? (
-                      <Badge variant="outline">
-                        Importado ·{" "}
-                        {formatPmProviderLabel(currentTask.externalProvider)}
-                        {currentTask.externalKey
-                          ? ` · ${currentTask.externalKey}`
-                          : ""}
-                      </Badge>
-                    ) : null}
-                    {currentTask.externalUrl ? (
-                      <a
-                        className="externalTaskLink"
-                        href={currentTask.externalUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        Abrir no{" "}
-                        {formatPmProviderLabel(
-                          currentTask.externalProvider ?? "pm",
-                        )}
-                      </a>
-                    ) : null}
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => openEditTaskForm()}
+                      {data.todayFocus.blockerLabel}
+                    </StatusAlert>
+                  ) : null}
+
+                  {data.todayFocus.focusKind === "unblock" &&
+                  data.todayFocus.dependencyLabel ? (
+                    <StatusAlert
+                      status="warning"
+                      title="Dependencia"
+                      className="nextActionAlert"
                     >
-                      Editar
+                      {data.todayFocus.dependencyLabel}
+                    </StatusAlert>
+                  ) : null}
+
+                  <div className="nextActionHeader">
+                    <span className="nextActionEyebrow">Proxima acao</span>
+                    <h2 className="nextActionStep">
+                      {data.todayFocus.nextStep}
+                    </h2>
+                    {data.todayFocus.headline &&
+                    data.todayFocus.headline !== data.todayFocus.nextStep ? (
+                      <p className="nextActionHeadline muted">
+                        {data.todayFocus.headline}
+                      </p>
+                    ) : null}
+                  </div>
+
+                  {data.todayFocus.focusKind !== "unblock" &&
+                  data.todayFocus.blockerLabel ? (
+                    <StatusAlert
+                      status="warning"
+                      title="Bloqueio"
+                      className="nextActionAlert"
+                    >
+                      {data.todayFocus.blockerLabel}
+                    </StatusAlert>
+                  ) : null}
+
+                  {data.todayFocus.focusKind !== "unblock" &&
+                  data.todayFocus.dependencyLabel ? (
+                    <StatusAlert
+                      status="warning"
+                      title="Dependencia"
+                      className="nextActionAlert"
+                    >
+                      {data.todayFocus.dependencyLabel}
+                    </StatusAlert>
+                  ) : null}
+
+                  {data.todayFocus.resumeHint ? (
+                    <p className="nextActionResume muted">
+                      Retomada: {data.todayFocus.resumeHint}
+                    </p>
+                  ) : null}
+
+                  <div className="actionRow">
+                    <Button type="button" onClick={handleNextActionPrimary}>
+                      {getNextActionPrimaryLabel()}
                     </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      disabled={taskActionBusy}
-                      onClick={() => void handleDuplicateTask()}
-                    >
-                      Duplicar
-                    </Button>
-                    {currentTask.primaryRepositoryId ? (
+                    {data.todayFocus.primaryRepositoryId ? (
                       <Button
                         type="button"
                         variant="outline"
-                        size="sm"
                         onClick={() =>
                           openContextForRepository(
-                            currentTask.primaryRepositoryId!,
-                            currentTask.organizationId,
+                            data.todayFocus.primaryRepositoryId!,
+                            data.currentTask?.organizationId,
                           )
                         }
                       >
-                        Abrir contexto Git
+                        Ir para{" "}
+                        {data.todayFocus.primaryRepositoryName ?? "projeto"}
                       </Button>
                     ) : null}
-                    {currentTask.status === "archived" ? (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        disabled={taskActionBusy}
-                        onClick={() => void handleReopenTask()}
-                      >
-                        Reabrir
-                      </Button>
-                    ) : (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        disabled={taskActionBusy}
-                        onClick={() => void handleArchiveTask()}
-                      >
-                        Arquivar
-                      </Button>
-                    )}
+                  </div>
+                </section>
+
+                {todayStatusChips.length > 0 ? (
+                  <div
+                    className="todayContextChips todayStatusChips"
+                    aria-label="Sinais do dia"
+                  >
+                    {todayStatusChips.map((chip) => (
+                      <Badge key={chip} variant="outline">
+                        {chip}
+                      </Badge>
+                    ))}
                   </div>
                 ) : null}
-              </div>
 
-              {resumeSuggestion &&
-              selectedTaskId === resumeSuggestion.taskId &&
-              !taskFormMode ? (
-                <StatusAlert status="ok" title="Sugestao de retomada">
-                  <div className="grid gap-3">
-                    <span>{resumeSuggestion.text}</span>
-                    <div className="actionRow">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setResumeSuggestion(null)}
-                      >
-                        Ignorar
-                      </Button>
-                      <Button
-                        type="button"
-                        size="sm"
-                        disabled={taskActionBusy}
-                        onClick={() => void handleApplyResumeSuggestion()}
-                      >
-                        Usar como retomada
-                      </Button>
-                    </div>
-                  </div>
-                </StatusAlert>
-              ) : null}
-
-              {taskFormMode ? (
-                <TaskFormPanel
-                  mode={taskFormMode}
-                  draft={taskFormDraft}
-                  busy={taskFormBusy}
-                  error={taskFormError}
-                  warnings={taskFormWarnings}
-                  organizations={organizations}
-                  organizationLogoUrls={organizationLogoUrls}
-                  projects={projects}
-                  repositories={repositories}
-                  onDraftChange={updateTaskFormDraft}
-                  onCancel={closeTaskForm}
-                  onSave={() => void handleSaveTaskForm()}
-                />
-              ) : currentTask ? (
-                <div className="taskDetailGrid">
-                  <div className="taskQuickActions">
-                    <h3 className="subheading">Status rapido</h3>
-                    <div className="timelineFilters">
-                      {QUICK_STATUS_OPTIONS.map((option) => (
-                        <Button
-                          key={option.value}
-                          type="button"
-                          size="sm"
-                          variant={
-                            currentTask.status === option.value
-                              ? "default"
-                              : "outline"
-                          }
-                          disabled={
-                            taskActionBusy ||
-                            currentTask.status === option.value
-                          }
-                          onClick={() =>
-                            void handleQuickStatusChange(option.value)
-                          }
-                        >
-                          {option.label}
-                        </Button>
-                      ))}
-                    </div>
-                  </div>
-                  {currentTask.description || currentTask.resumeSummary ? (
-                    <div className="taskContextSummary">
-                      {currentTask.description ? (
-                        <p className="muted">{currentTask.description}</p>
-                      ) : null}
-                      {currentTask.resumeSummary ? (
-                        <StatusAlert status="ok" title="Retomada">
-                          {currentTask.resumeSummary}
-                        </StatusAlert>
-                      ) : null}
-                    </div>
-                  ) : null}
-                  <div>
-                    <h3 className="subheading">Historico</h3>
-                    {taskTimeline.length > 0 ? (
-                      <FilterTabs
-                        value={timelineFilter}
-                        onValueChange={setTimelineFilter}
-                        aria-label="Filtrar historico por tipo"
-                        items={TIMELINE_FILTERS.map((filter) => ({
-                          id: filter.id,
-                          label: `${filter.label} (${timelineCounts[filter.id]})`,
-                          icon: HISTORY_KIND_ICONS[filter.id],
-                        }))}
-                      />
-                    ) : null}
-                    {taskTimeline.length === 0 ? (
-                      <StatusAlert status="warning" title="Historico vazio">
-                        Comece um foco ou adicione notas para montar o contexto.
-                      </StatusAlert>
-                    ) : filteredTimeline.length > 0 ? (
-                      <ul className="timelineList">
-                        {filteredTimeline.map((entry) => (
-                          <TimelineEntry
-                            key={entry.id}
-                            kind={entry.kind}
-                            title={entry.title}
-                            detail={entry.detail}
-                            when={formatTimelineWhen(entry.createdAt)}
-                          />
-                        ))}
-                      </ul>
-                    ) : (
-                      <StatusAlert status="warning" title="Nada neste filtro">
-                        Tente outro tipo de evento.
-                      </StatusAlert>
-                    )}
-
-                    {currentTask?.blockedReason ? (
-                      <>
-                        <h3 className="subheading">Por que esta parada</h3>
-                        <StatusAlert status="mismatch" title="Bloqueio">
-                          {currentTask.blockedReason}
-                        </StatusAlert>
-                      </>
-                    ) : null}
-
-                    <h3 className="subheading">Dependencias</h3>
-                    <div className="sessionForm compactForm">
-                      <p className="muted">
-                        Esta tarefa:{" "}
-                        <strong>
-                          {currentTask?.title ?? "Sem tarefa selecionada"}
-                        </strong>
-                      </p>
-                      <label>
-                        Relacao com outra tarefa
-                        <select
-                          value={dependencyRelation}
-                          onChange={(event) => {
-                            setDependencyRelation(
-                              event.target.value as "depends_on" | "blocks",
-                            );
-                            setDependencyError(null);
-                          }}
-                        >
-                          <option value="depends_on">depende de</option>
-                          <option value="blocks">bloqueia</option>
-                        </select>
-                      </label>
-                      <label>
-                        Tarefa
-                        <select
-                          value={dependencyTargetId}
-                          onChange={(event) => {
-                            setDependencyTargetId(event.target.value);
-                            setDependencyError(null);
-                          }}
-                        >
-                          <option value="">Selecione a tarefa</option>
-                          {filteredBacklog
-                            .filter((item) => item.id !== selectedTaskId)
-                            .map((item) => (
-                              <option key={item.id} value={item.id}>
-                                {item.title}
-                              </option>
-                            ))}
-                        </select>
-                      </label>
-                      {dependencyPreviewText ? (
-                        <p className="dependencyPreview">
-                          {dependencyPreviewText}
-                        </p>
-                      ) : null}
-                      {dependencyError ? (
-                        <p className="dependencyError">{dependencyError}</p>
-                      ) : null}
-                      <div className="actionRow">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          onClick={handleCreateDependency}
-                          disabled={
-                            dependencyBusy ||
-                            !currentTask ||
-                            !dependencyTargetId
-                          }
-                        >
-                          Adicionar dependencia
-                        </Button>
-                      </div>
-                    </div>
-                    {(taskContext?.dependencies ?? []).length > 0 ? (
-                      <ul className="historyList">
-                        {(taskContext?.dependencies ?? []).map((dependency) => (
-                          <li key={dependency.id}>
-                            <div>
-                              <strong>{dependency.title}</strong>
-                              <span>
-                                {currentTask
-                                  ? formatDependencySentence(
-                                      currentTask.title,
-                                      dependency.relation,
-                                      dependency.title,
-                                    )
-                                  : dependency.relation === "depends_on"
-                                    ? "depende de"
-                                    : "bloqueia"}
-                              </span>
-                              <code>{dependency.status}</code>
-                            </div>
-                            <Button
-                              type="button"
-                              variant="outline"
-                              onClick={() =>
-                                handleDeleteDependency(dependency.id)
-                              }
-                              disabled={dependencyBusy}
-                            >
-                              Remover
-                            </Button>
-                          </li>
-                        ))}
-                      </ul>
-                    ) : (
-                      <StatusAlert status="ok" title="Tudo livre">
-                        Nenhuma dependencia registrada nesta tarefa.
-                      </StatusAlert>
-                    )}
-
-                    <h3 className="subheading">Notas</h3>
-                    <div className="sessionForm compactForm">
-                      <label>
-                        Titulo
-                        <input
-                          value={noteTitle}
-                          onChange={(event) => setNoteTitle(event.target.value)}
-                          placeholder="Decisao tomada"
-                        />
-                      </label>
-                      <label>
-                        Conteudo
-                        <Textarea
-                          value={noteContent}
-                          onChange={(event) =>
-                            setNoteContent(event.target.value)
-                          }
-                          placeholder="Ex.: manter invalidação após persistência do novo token"
-                        />
-                      </label>
-                      <div className="actionRow">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          onClick={handleSaveTaskNote}
-                          disabled={contextBusy}
-                        >
-                          Salvar nota
-                        </Button>
-                      </div>
-                    </div>
-
-                    <ul className="historyList">
-                      {(taskContext?.taskNotes ?? []).map((note) => (
-                        <li key={note.id}>
-                          <div>
-                            <strong>{note.title}</strong>
-                            {note.sourceType ? (
-                              <Badge variant="outline">
-                                {formatSourceTypeLabel(note.sourceType)}
-                              </Badge>
-                            ) : null}
-                            <span>{formatDateTime(note.createdAt)}</span>
-                            <code>{note.content}</code>
-                          </div>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-
-                  <div>
-                    <h3 className="subheading">Ultimos focos</h3>
-                    {(taskContext?.recentTaskSessions ?? []).length > 0 ? (
-                      <ul className="historyList">
-                        {(taskContext?.recentTaskSessions ?? []).map(
-                          (session) => (
-                            <li key={session.id}>
-                              <div>
-                                <strong>
-                                  {formatDateTime(session.startedAt)}
-                                </strong>
-                                {session.sourceType ? (
-                                  <Badge variant="outline">
-                                    {formatSourceTypeLabel(session.sourceType)}
-                                  </Badge>
-                                ) : null}
-                                <span>
-                                  {session.branchName ??
-                                    "Branch nao registrada"}
-                                </span>
-                                <span>
-                                  {session.goal ?? "Sem objetivo registrado"}
-                                </span>
-                              </div>
-                              <div className="historyMeta">
-                                <code>
-                                  {session.result ??
-                                    "Ainda sem resultado final"}
-                                </code>
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  onClick={() =>
-                                    handleResumeFromSession(session)
-                                  }
-                                >
-                                  Retomar
-                                </Button>
-                              </div>
-                            </li>
-                          ),
-                        )}
-                      </ul>
-                    ) : (
-                      <StatusAlert
-                        status="warning"
-                        title="Sem sessoes anteriores"
-                      >
-                        Quando encerrar um foco, ele aparece aqui.
-                      </StatusAlert>
-                    )}
-
-                    <h3 className="subheading">Links e anexos</h3>
-                    <div className="sessionForm compactForm">
-                      <label>
-                        Titulo
-                        <input
-                          value={artifactTitle}
-                          onChange={(event) =>
-                            setArtifactTitle(event.target.value)
-                          }
-                          placeholder="PR, doc, link"
-                        />
-                      </label>
-                      <label>
-                        URL
-                        <input
-                          value={artifactUrl}
-                          onChange={(event) =>
-                            setArtifactUrl(event.target.value)
-                          }
-                          placeholder="https://..."
-                        />
-                      </label>
-                      <div className="actionRow">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          onClick={handleAttachArtifact}
-                          disabled={contextBusy}
-                        >
-                          Anexar link
-                        </Button>
-                      </div>
-                    </div>
-
-                    <ul className="historyList">
-                      {(taskContext?.taskArtifacts ?? []).map((artifact) => (
-                        <li key={artifact.id}>
-                          <div>
-                            <strong>
-                              {artifact.title ?? artifact.artifactType}
-                            </strong>
-                            {artifact.sourceType ? (
-                              <Badge variant="outline">
-                                {formatSourceTypeLabel(artifact.sourceType)}
-                              </Badge>
-                            ) : null}
-                            <span>{formatDateTime(artifact.createdAt)}</span>
-                            <code>{artifact.url ?? "-"}</code>
-                          </div>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
+                <div className="dayMetrics">
+                  <article className="dayMetric">
+                    <span>Prontas para fazer</span>
+                    <strong>{data.summary.executableCount}</strong>
+                  </article>
+                  <article className="dayMetric">
+                    <span>Em andamento</span>
+                    <strong>{data.summary.doingCount}</strong>
+                  </article>
+                  <article className="dayMetric">
+                    <span>Bloqueadas</span>
+                    <strong>{data.summary.blockedCount}</strong>
+                  </article>
                 </div>
-              ) : (
-                <StatusAlert status="warning" title="Escolha uma tarefa">
-                  A lista ao lado mostra tudo que esta no seu backlog.
-                </StatusAlert>
-              )}
-            </div>
-          </div>
-        </section>
-      ) : null}
 
-      {activeView === "organizations" ? (
-        <section className="panel orgPanel">
-          <div className="orgLayout">
-            <aside className="orgSidebar">
-              <div className="backlogSidebarHeader">
-                <SectionTitle icon={Building2}>Empresas</SectionTitle>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    setShowNewOrgForm((current) => !current);
-                    setOrgSetupError(null);
-                  }}
-                >
-                  <Plus className="h-4 w-4" aria-hidden />
-                  Nova empresa
-                </Button>
+                {deadlineAlerts && deadlineAlerts.items.length > 0 ? (
+                  <section
+                    className="integrationDeadlines"
+                    aria-label="Prazos das integracoes"
+                  >
+                    <h3 className="subheading">Prazos das integracoes</h3>
+                    <ul className="historyList integrationDeadlineList">
+                      {deadlineAlerts.items.map((alert) => (
+                        <li key={`${alert.workItemId}-${alert.kind}`}>
+                          <div>
+                            <strong>{alert.title}</strong>
+                            <span>
+                              {formatDeadlineAlertKind(alert.kind)} ·{" "}
+                              {formatDateTime(alert.scheduledFor)}
+                              {alert.externalProvider
+                                ? ` · ${formatPmProviderLabel(alert.externalProvider)}`
+                                : ""}
+                            </span>
+                          </div>
+                          {alert.externalUrl ? (
+                            <a
+                              className="externalTaskLink"
+                              href={alert.externalUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              Abrir
+                            </a>
+                          ) : null}
+                        </li>
+                      ))}
+                    </ul>
+                  </section>
+                ) : null}
+
+                <div className="quickLinks">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setActiveView("backlog")}
+                  >
+                    Ver tarefas
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setActiveView("repos")}
+                  >
+                    Ver projetos
+                  </Button>
+                </div>
+              </div>
+            </section>
+
+            <section
+              ref={sessionPanelRef}
+              className="panel focusPanel sessionPanel"
+            >
+              <div className="sessionHeader">
+                <div className="panelHeading">
+                  <h2>Foco agora</h2>
+                  <p className="muted">
+                    {data.activeSession
+                      ? "Registre o resultado da sessao abaixo."
+                      : "Registre o que pretende fazer neste bloco de trabalho."}
+                  </p>
+                </div>
+                <StatusBadge variant={data.activeSession ? "live" : "idle"}>
+                  {data.activeSession ? "Em foco" : "Parado"}
+                </StatusBadge>
               </div>
 
-              {showNewOrgForm ? (
-                <div className="sessionForm compactForm">
+              {!data.activeSession ? (
+                <div className="sessionForm">
                   <label>
-                    Nome
-                    <input
-                      value={newOrgName}
-                      onChange={(event) => setNewOrgName(event.target.value)}
-                      placeholder="Empresa A"
+                    O que voce vai fazer?
+                    <Textarea
+                      value={sessionGoal}
+                      onChange={(event) => setSessionGoal(event.target.value)}
+                      placeholder="Ex.: corrigir o bug do login antes do deploy"
                     />
-                  </label>
-                  <label>
-                    Tipo
-                    <select
-                      value={newOrgKind}
-                      onChange={(event) => setNewOrgKind(event.target.value)}
-                    >
-                      <option value="company">Empresa</option>
-                      <option value="personal">Pessoal</option>
-                      <option value="community">Comunidade</option>
-                    </select>
                   </label>
                   <div className="actionRow">
                     <Button
                       type="button"
-                      onClick={() => void handleCreateOrganization()}
-                      disabled={orgSetupBusy || !newOrgName.trim()}
+                      onClick={handleStartSession}
+                      disabled={sessionBusy || !selectedTaskId}
                     >
-                      <Building2 className="h-4 w-4" aria-hidden />
-                      Criar empresa
+                      {sessionBusy ? "Iniciando..." : "Comecar foco"}
                     </Button>
                   </div>
                 </div>
-              ) : null}
+              ) : (
+                <div className="sessionForm">
+                  <label>
+                    O que saiu disso?
+                    <Textarea
+                      value={sessionResult}
+                      onChange={(event) => setSessionResult(event.target.value)}
+                      placeholder="Ex.: bug corrigido e testado localmente"
+                    />
+                  </label>
+                  <label>
+                    Decisoes importantes
+                    <Textarea
+                      value={sessionDecisions}
+                      onChange={(event) =>
+                        setSessionDecisions(event.target.value)
+                      }
+                      placeholder="Ex.: manter a validacao no backend por enquanto"
+                    />
+                  </label>
+                  <div className="actionRow">
+                    <Button
+                      type="button"
+                      onClick={handleEndSession}
+                      disabled={sessionBusy}
+                    >
+                      {sessionBusy ? "Encerrando..." : "Encerrar foco"}
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </section>
 
-              <div className="repoList orgOrgList">
-                {organizations.map((organization) => (
-                  <SelectableListItem
-                    key={organization.id}
-                    active={orgSetupSelectedId === organization.id}
-                    onClick={() => {
-                      setOrgSetupSelectedId(organization.id);
-                      setOrgSetupError(null);
-                    }}
-                    leading={
-                      <OrganizationAvatar
-                        name={organization.name}
-                        kind={organization.kind}
-                        logoUrl={getOrganizationLogoUrl(organization.id)}
-                        size="sm"
-                      />
-                    }
-                    title={organization.name}
-                    subtitle={formatOrganizationKind(organization.kind)}
-                  >
-                    {organization.gitUserName ? (
-                      <Badge variant="outline">
-                        {organization.gitUserName}
-                      </Badge>
-                    ) : (
-                      <Badge variant="warning">Sem identidade Git</Badge>
-                    )}
-                    <span>
-                      {
-                        projects.filter(
-                          (project) =>
-                            project.organizationId === organization.id,
-                        ).length
-                      }{" "}
-                      projetos
-                    </span>
-                  </SelectableListItem>
-                ))}
+            {data.todayPlan.length > 0 ? (
+              <section className="panel">
+                <div className="panelHeading">
+                  <h2>Proximos passos</h2>
+                  <p className="muted">Sugestoes do que atacar em seguida.</p>
+                </div>
+                <ul className="taskList">
+                  {data.todayPlan.map((item) => {
+                    const workItem = planMap.get(item.workItemId);
+                    return (
+                      <li
+                        key={item.id}
+                        className={
+                          item.isCommitted
+                            ? "taskListItem-committed"
+                            : undefined
+                        }
+                      >
+                        <div>
+                          <strong>
+                            {item.position}. {workItem?.title}
+                          </strong>
+                          <PlanStatusBadge committed={item.isCommitted}>
+                            {item.isCommitted
+                              ? "Comprometida hoje"
+                              : "Sugestao"}
+                          </PlanStatusBadge>
+                        </div>
+                        <span>{formatTaskStatus(workItem?.status ?? "-")}</span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </section>
+            ) : null}
+
+            <section className="panel softPanel twoCol">
+              <div>
+                <div className="panelHeading">
+                  <h2>Para retomar depois</h2>
+                  <p className="muted">
+                    Tarefas relacionadas a{" "}
+                    <strong>
+                      {data.currentTask?.title ??
+                        currentTask?.title ??
+                        "sua selecao atual"}
+                    </strong>
+                    .
+                  </p>
+                </div>
+                <ul className="taskList">
+                  {todayRecoverableContext.length > 0 ? (
+                    todayRecoverableContext.map((candidate) => {
+                      const workItem = planMap.get(candidate.workItemId);
+                      return (
+                        <li key={candidate.workItemId}>
+                          <div>
+                            <strong>{workItem?.title}</strong>
+                            <span>{candidate.reasons.join(" · ")}</span>
+                          </div>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => {
+                              setSelectedTaskId(candidate.workItemId);
+                              setActiveView("backlog");
+                            }}
+                          >
+                            Abrir
+                          </Button>
+                        </li>
+                      );
+                    })
+                  ) : (
+                    <li>
+                      <div>
+                        <strong>Nada por aqui</strong>
+                        <span>
+                          Quando houver sugestoes, elas aparecem nesta lista.
+                        </span>
+                      </div>
+                    </li>
+                  )}
+                </ul>
               </div>
-            </aside>
 
-            <div className="orgDetail">
-              {orgSetupError ? (
-                <p className="errorText">{orgSetupError}</p>
-              ) : null}
-              {orgSetupSuccess ? (
-                <p className="resultText">{orgSetupSuccess}</p>
-              ) : null}
+              <div>
+                <div className="panelHeading">
+                  <h2>Ambiente Git</h2>
+                  <p className="muted">
+                    Projeto:{" "}
+                    <strong>
+                      {data.todayFocus.primaryRepositoryName ??
+                        data.guardrail?.repositoryName ??
+                        "Nenhum configurado ainda"}
+                    </strong>
+                  </p>
+                </div>
+                {dashboardValidation ? (
+                  <>
+                    <StatusAlert
+                      status={dashboardValidation.status}
+                      title={formatValidationStatus(dashboardValidation.status)}
+                    >
+                      Conferencia rapida da identidade local
+                    </StatusAlert>
+                    <ul className="checkList">
+                      {dashboardValidation.checks.map((check) => (
+                        <li key={check.key}>
+                          <strong>{humanizeCheckKey(check.key)}</strong>
+                          <span>{formatValidationCheckDetail(check)}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </>
+                ) : (
+                  <StatusAlert status="warning" title="Ainda sem conferencia">
+                    Abra a aba Projetos para validar o ambiente Git deste repo.
+                  </StatusAlert>
+                )}
+                <div className="quickLinks">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => {
+                      if (data.guardrail?.repositoryId) {
+                        openContextForRepository(
+                          data.guardrail.repositoryId,
+                          data.currentTask?.organizationId,
+                        );
+                      } else {
+                        setActiveView("repos");
+                      }
+                    }}
+                  >
+                    <ArrowRightLeft className="h-4 w-4" aria-hidden />
+                    Abrir troca de contexto
+                  </Button>
+                </div>
+              </div>
+            </section>
+          </>
+        ) : null}
 
-              {orgSetupOrganization ? (
-                <>
-                  <FilterTabs
-                    items={ORG_DETAIL_TABS.map((tab) => ({
-                      id: tab.id,
-                      label: tab.label,
-                      icon: ORG_TAB_ICONS[tab.id],
-                    }))}
-                    value={orgDetailTab}
-                    onValueChange={(value) => setOrgDetailTab(value)}
-                    aria-label="Secoes da empresa"
+        {activeView === "backlog" ? (
+          <section className="panel backlogPanel">
+            <div className="backlogLayout">
+              <aside className="backlogSidebar">
+                <div className="backlogSidebarHeader">
+                  <SectionTitle icon={ListTodo}>Suas tarefas</SectionTitle>
+                  <Button type="button" size="sm" onClick={openCreateTaskForm}>
+                    <Plus className="h-4 w-4" aria-hidden />
+                    Nova tarefa
+                  </Button>
+                </div>
+
+                <SearchField
+                  type="search"
+                  className="h-10"
+                  placeholder="Buscar tarefas..."
+                  value={backlogSearchQuery}
+                  onChange={(event) =>
+                    setBacklogSearchQuery(event.target.value)
+                  }
+                  aria-label="Buscar tarefas no backlog"
+                />
+
+                <div className="backlogFilters">
+                  <label className="grid gap-2 text-xs text-muted-foreground">
+                    <Label htmlFor="backlog-status-filter">Status</Label>
+                    <select
+                      id="backlog-status-filter"
+                      value={backlogStatusFilter}
+                      onChange={(event) =>
+                        setBacklogStatusFilter(event.target.value)
+                      }
+                    >
+                      {BACKLOG_STATUS_FILTERS.map((filter) => (
+                        <option key={filter.value} value={filter.value}>
+                          {filter.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="grid gap-2 text-xs text-muted-foreground">
+                    <Label htmlFor="backlog-org-filter">Empresa</Label>
+                    <select
+                      id="backlog-org-filter"
+                      value={backlogOrgFilter}
+                      onChange={(event) =>
+                        setBacklogOrgFilter(event.target.value)
+                      }
+                    >
+                      <option value="all">Todas</option>
+                      {organizations.map((organization) => (
+                        <option key={organization.id} value={organization.id}>
+                          {organization.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="grid gap-2 text-xs text-muted-foreground">
+                    <Label htmlFor="backlog-sort">Ordenar</Label>
+                    <select
+                      id="backlog-sort"
+                      value={backlogSort}
+                      onChange={(event) =>
+                        setBacklogSort(
+                          event.target.value as "priority" | "title" | "status",
+                        )
+                      }
+                    >
+                      {BACKLOG_SORT_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+
+                <label className="backlogToggleArchived">
+                  <input
+                    type="checkbox"
+                    checked={showArchivedBacklog}
+                    onChange={(event) =>
+                      setShowArchivedBacklog(event.target.checked)
+                    }
                   />
+                  Mostrar arquivadas
+                </label>
 
-                  {orgDetailTab === "company" ? (
-                    <div className="orgDetailSection">
-                      <div className="orgProfileHeader">
-                        <OrganizationAvatar
-                          name={orgSetupOrganization.name}
-                          kind={orgSetupOrganization.kind}
-                          logoUrl={getOrganizationLogoUrl(
-                            orgSetupOrganization.id,
+                <div className="repoList backlogList">
+                  {filteredBacklog.length === 0 ? (
+                    <p className="historyEmpty">Nenhuma tarefa neste filtro.</p>
+                  ) : null}
+                  {filteredBacklog.map((item) => (
+                    <SelectableListItem
+                      key={item.id}
+                      active={selectedTaskId === item.id}
+                      linked={relatedDependencyIds.has(item.id)}
+                      onClick={() => selectTaskId(item.id)}
+                      title={item.title}
+                      subtitle={buildTaskPreviewLine(item)}
+                    >
+                      <Badge variant="outline">P{item.priority ?? 3}</Badge>
+                      {item.status === "blocked" ? (
+                        <StatusBadge variant="blocked">Bloqueada</StatusBadge>
+                      ) : null}
+                      {item.resumeSummary ? (
+                        <Badge variant="success">Retomada</Badge>
+                      ) : null}
+                      {item.status === "archived" ? (
+                        <Badge variant="secondary">Arquivada</Badge>
+                      ) : null}
+                      {relatedDependencyIds.has(item.id) ? (
+                        <Badge variant="outline">Relacionada</Badge>
+                      ) : null}
+                      {item.sourceType === "imported" &&
+                      item.externalProvider ? (
+                        <Badge variant="outline">
+                          Importado ·{" "}
+                          {formatPmProviderLabel(item.externalProvider)}
+                          {item.externalKey ? ` · ${item.externalKey}` : ""}
+                        </Badge>
+                      ) : null}
+                      {item.scheduledFor ? (
+                        <Badge variant="outline">
+                          Prazo {formatDateTime(item.scheduledFor)}
+                        </Badge>
+                      ) : null}
+                      <span>{formatTaskStatus(item.status)}</span>
+                    </SelectableListItem>
+                  ))}
+                </div>
+              </aside>
+
+              <div className="taskDetailPanel">
+                <div className="taskDetailHeader">
+                  <div className="panelHeading">
+                    <h2>
+                      {taskFormMode === "create"
+                        ? "Nova tarefa"
+                        : taskFormMode === "edit"
+                          ? "Editar tarefa"
+                          : (currentTask?.title ?? "Escolha uma tarefa")}
+                    </h2>
+                    <p className="muted">
+                      {taskFormMode
+                        ? "Preencha o essencial e salve para atualizar o backlog."
+                        : currentTask
+                          ? "Historico, notas e links desta tarefa."
+                          : "Selecione uma tarefa na lista ao lado."}
+                    </p>
+                  </div>
+                  {taskFormMode ? null : currentTask ? (
+                    <div className="taskDetailActions">
+                      <StatusBadge
+                        variant={
+                          currentTask.status === "blocked"
+                            ? "blocked"
+                            : currentTask.status === "doing"
+                              ? "live"
+                              : "idle"
+                        }
+                      >
+                        {formatTaskStatus(currentTask.status)}
+                      </StatusBadge>
+                      <Badge variant="outline">
+                        P{currentTask.priority ?? 3}
+                      </Badge>
+                      {currentTask.sourceType === "imported" &&
+                      currentTask.externalProvider ? (
+                        <Badge variant="outline">
+                          Importado ·{" "}
+                          {formatPmProviderLabel(currentTask.externalProvider)}
+                          {currentTask.externalKey
+                            ? ` · ${currentTask.externalKey}`
+                            : ""}
+                        </Badge>
+                      ) : null}
+                      {currentTask.externalUrl ? (
+                        <a
+                          className="externalTaskLink"
+                          href={currentTask.externalUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          Abrir no{" "}
+                          {formatPmProviderLabel(
+                            currentTask.externalProvider ?? "pm",
                           )}
-                          size="lg"
-                        />
-                        <div className="orgProfileSummary">
-                          <strong>{orgSetupOrganization.name}</strong>
-                          <span>
-                            {formatOrganizationKind(orgSetupOrganization.kind)}
-                          </span>
-                          <span>
-                            Perfil Git:{" "}
-                            {orgSetupOrganization.environmentName ?? "Padrao"}
-                          </span>
-                        </div>
-                      </div>
-
-                      <div className="contextIdentityCard">
-                        <article>
-                          <span>Empresa</span>
-                          <strong>{orgSetupOrganization.name}</strong>
-                        </article>
-                        <article>
-                          <span>Tipo</span>
-                          <strong>
-                            {formatOrganizationKind(orgSetupOrganization.kind)}
-                          </strong>
-                        </article>
-                        <article>
-                          <span>Perfil Git</span>
-                          <strong>
-                            {orgSetupOrganization.environmentName ?? "Padrao"}
-                          </strong>
-                        </article>
-                      </div>
-
-                      {orgSetupGaps.length > 0 ? (
-                        <div className="todayStatusChips">
-                          {orgSetupGaps.map((gap) => (
-                            <Badge key={gap} variant="warning">
-                              {gap}
-                            </Badge>
-                          ))}
-                        </div>
+                        </a>
+                      ) : null}
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => openEditTaskForm()}
+                      >
+                        Editar
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={taskActionBusy}
+                        onClick={() => void handleDuplicateTask()}
+                      >
+                        Duplicar
+                      </Button>
+                      {currentTask.primaryRepositoryId ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() =>
+                            openContextForRepository(
+                              currentTask.primaryRepositoryId!,
+                              currentTask.organizationId,
+                            )
+                          }
+                        >
+                          Abrir contexto Git
+                        </Button>
+                      ) : null}
+                      {currentTask.status === "archived" ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={taskActionBusy}
+                          onClick={() => void handleReopenTask()}
+                        >
+                          Reabrir
+                        </Button>
                       ) : (
-                        <StatusAlert status="ok" title="Contexto basico pronto">
-                          Empresa, perfil Git e repos podem ser usados no fluxo
-                          de trabalho.
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={taskActionBusy}
+                          onClick={() => void handleArchiveTask()}
+                        >
+                          Arquivar
+                        </Button>
+                      )}
+                    </div>
+                  ) : null}
+                </div>
+
+                {resumeSuggestion &&
+                selectedTaskId === resumeSuggestion.taskId &&
+                !taskFormMode ? (
+                  <StatusAlert status="ok" title="Sugestao de retomada">
+                    <div className="grid gap-3">
+                      <span>{resumeSuggestion.text}</span>
+                      <div className="actionRow">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setResumeSuggestion(null)}
+                        >
+                          Ignorar
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          disabled={taskActionBusy}
+                          onClick={() => void handleApplyResumeSuggestion()}
+                        >
+                          Usar como retomada
+                        </Button>
+                      </div>
+                    </div>
+                  </StatusAlert>
+                ) : null}
+
+                {taskFormMode ? (
+                  <TaskFormPanel
+                    mode={taskFormMode}
+                    draft={taskFormDraft}
+                    busy={taskFormBusy}
+                    error={taskFormError}
+                    warnings={taskFormWarnings}
+                    organizations={organizations}
+                    organizationLogoUrls={organizationLogoUrls}
+                    projects={projects}
+                    repositories={repositories}
+                    onDraftChange={updateTaskFormDraft}
+                    onCancel={closeTaskForm}
+                    onSave={() => void handleSaveTaskForm()}
+                  />
+                ) : currentTask ? (
+                  <div className="taskDetailGrid">
+                    <div className="taskQuickActions">
+                      <h3 className="subheading">Status rapido</h3>
+                      <div className="timelineFilters">
+                        {QUICK_STATUS_OPTIONS.map((option) => (
+                          <Button
+                            key={option.value}
+                            type="button"
+                            size="sm"
+                            variant={
+                              currentTask.status === option.value
+                                ? "default"
+                                : "outline"
+                            }
+                            disabled={
+                              taskActionBusy ||
+                              currentTask.status === option.value
+                            }
+                            onClick={() =>
+                              void handleQuickStatusChange(option.value)
+                            }
+                          >
+                            {option.label}
+                          </Button>
+                        ))}
+                      </div>
+                    </div>
+                    {currentTask.description || currentTask.resumeSummary ? (
+                      <div className="taskContextSummary">
+                        {currentTask.description ? (
+                          <p className="muted">{currentTask.description}</p>
+                        ) : null}
+                        {currentTask.resumeSummary ? (
+                          <StatusAlert status="ok" title="Retomada">
+                            {currentTask.resumeSummary}
+                          </StatusAlert>
+                        ) : null}
+                      </div>
+                    ) : null}
+                    <div>
+                      <h3 className="subheading">Historico</h3>
+                      {taskTimeline.length > 0 ? (
+                        <FilterTabs
+                          value={timelineFilter}
+                          onValueChange={setTimelineFilter}
+                          aria-label="Filtrar historico por tipo"
+                          items={TIMELINE_FILTERS.map((filter) => ({
+                            id: filter.id,
+                            label: `${filter.label} (${timelineCounts[filter.id]})`,
+                            icon: HISTORY_KIND_ICONS[filter.id],
+                          }))}
+                        />
+                      ) : null}
+                      {taskTimeline.length === 0 ? (
+                        <StatusAlert status="warning" title="Historico vazio">
+                          Comece um foco ou adicione notas para montar o
+                          contexto.
+                        </StatusAlert>
+                      ) : filteredTimeline.length > 0 ? (
+                        <ul className="timelineList">
+                          {filteredTimeline.map((entry) => (
+                            <TimelineEntry
+                              key={entry.id}
+                              kind={entry.kind}
+                              title={entry.title}
+                              detail={entry.detail}
+                              when={formatTimelineWhen(entry.createdAt)}
+                            />
+                          ))}
+                        </ul>
+                      ) : (
+                        <StatusAlert status="warning" title="Nada neste filtro">
+                          Tente outro tipo de evento.
                         </StatusAlert>
                       )}
 
+                      {currentTask?.blockedReason ? (
+                        <>
+                          <h3 className="subheading">Por que esta parada</h3>
+                          <StatusAlert status="mismatch" title="Bloqueio">
+                            {currentTask.blockedReason}
+                          </StatusAlert>
+                        </>
+                      ) : null}
+
+                      <h3 className="subheading">Dependencias</h3>
                       <div className="sessionForm compactForm">
-                        <SectionTitle icon={Image}>
-                          Logo da empresa
-                        </SectionTitle>
-                        <div className="orgLogoField">
+                        <p className="muted">
+                          Esta tarefa:{" "}
+                          <strong>
+                            {currentTask?.title ?? "Sem tarefa selecionada"}
+                          </strong>
+                        </p>
+                        <label>
+                          Relacao com outra tarefa
+                          <select
+                            value={dependencyRelation}
+                            onChange={(event) => {
+                              setDependencyRelation(
+                                event.target.value as "depends_on" | "blocks",
+                              );
+                              setDependencyError(null);
+                            }}
+                          >
+                            <option value="depends_on">depende de</option>
+                            <option value="blocks">bloqueia</option>
+                          </select>
+                        </label>
+                        <label>
+                          Tarefa
+                          <select
+                            value={dependencyTargetId}
+                            onChange={(event) => {
+                              setDependencyTargetId(event.target.value);
+                              setDependencyError(null);
+                            }}
+                          >
+                            <option value="">Selecione a tarefa</option>
+                            {filteredBacklog
+                              .filter((item) => item.id !== selectedTaskId)
+                              .map((item) => (
+                                <option key={item.id} value={item.id}>
+                                  {item.title}
+                                </option>
+                              ))}
+                          </select>
+                        </label>
+                        {dependencyPreviewText ? (
+                          <p className="dependencyPreview">
+                            {dependencyPreviewText}
+                          </p>
+                        ) : null}
+                        {dependencyError ? (
+                          <p className="dependencyError">{dependencyError}</p>
+                        ) : null}
+                        <div className="actionRow">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={handleCreateDependency}
+                            disabled={
+                              dependencyBusy ||
+                              !currentTask ||
+                              !dependencyTargetId
+                            }
+                          >
+                            Adicionar dependencia
+                          </Button>
+                        </div>
+                      </div>
+                      {(taskContext?.dependencies ?? []).length > 0 ? (
+                        <ul className="historyList">
+                          {(taskContext?.dependencies ?? []).map(
+                            (dependency) => (
+                              <li key={dependency.id}>
+                                <div>
+                                  <strong>{dependency.title}</strong>
+                                  <span>
+                                    {currentTask
+                                      ? formatDependencySentence(
+                                          currentTask.title,
+                                          dependency.relation,
+                                          dependency.title,
+                                        )
+                                      : dependency.relation === "depends_on"
+                                        ? "depende de"
+                                        : "bloqueia"}
+                                  </span>
+                                  <code>{dependency.status}</code>
+                                </div>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  onClick={() =>
+                                    handleDeleteDependency(dependency.id)
+                                  }
+                                  disabled={dependencyBusy}
+                                >
+                                  Remover
+                                </Button>
+                              </li>
+                            ),
+                          )}
+                        </ul>
+                      ) : (
+                        <StatusAlert status="ok" title="Tudo livre">
+                          Nenhuma dependencia registrada nesta tarefa.
+                        </StatusAlert>
+                      )}
+
+                      <h3 className="subheading">Notas</h3>
+                      <div className="sessionForm compactForm">
+                        <label>
+                          Titulo
+                          <input
+                            value={noteTitle}
+                            onChange={(event) =>
+                              setNoteTitle(event.target.value)
+                            }
+                            placeholder="Decisao tomada"
+                          />
+                        </label>
+                        <label>
+                          Conteudo
+                          <Textarea
+                            value={noteContent}
+                            onChange={(event) =>
+                              setNoteContent(event.target.value)
+                            }
+                            placeholder="Ex.: manter invalidação após persistência do novo token"
+                          />
+                        </label>
+                        <div className="actionRow">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={handleSaveTaskNote}
+                            disabled={contextBusy}
+                          >
+                            Salvar nota
+                          </Button>
+                        </div>
+                      </div>
+
+                      <ul className="historyList">
+                        {(taskContext?.taskNotes ?? []).map((note) => (
+                          <li key={note.id}>
+                            <div>
+                              <strong>{note.title}</strong>
+                              {note.sourceType ? (
+                                <Badge variant="outline">
+                                  {formatSourceTypeLabel(note.sourceType)}
+                                </Badge>
+                              ) : null}
+                              <span>{formatDateTime(note.createdAt)}</span>
+                              <code>{note.content}</code>
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+
+                    <div>
+                      <h3 className="subheading">Ultimos focos</h3>
+                      {(taskContext?.recentTaskSessions ?? []).length > 0 ? (
+                        <ul className="historyList">
+                          {(taskContext?.recentTaskSessions ?? []).map(
+                            (session) => (
+                              <li key={session.id}>
+                                <div>
+                                  <strong>
+                                    {formatDateTime(session.startedAt)}
+                                  </strong>
+                                  {session.sourceType ? (
+                                    <Badge variant="outline">
+                                      {formatSourceTypeLabel(
+                                        session.sourceType,
+                                      )}
+                                    </Badge>
+                                  ) : null}
+                                  <span>
+                                    {session.branchName ??
+                                      "Branch nao registrada"}
+                                  </span>
+                                  <span>
+                                    {session.goal ?? "Sem objetivo registrado"}
+                                  </span>
+                                </div>
+                                <div className="historyMeta">
+                                  <code>
+                                    {session.result ??
+                                      "Ainda sem resultado final"}
+                                  </code>
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    onClick={() =>
+                                      handleResumeFromSession(session)
+                                    }
+                                  >
+                                    Retomar
+                                  </Button>
+                                </div>
+                              </li>
+                            ),
+                          )}
+                        </ul>
+                      ) : (
+                        <StatusAlert
+                          status="warning"
+                          title="Sem sessoes anteriores"
+                        >
+                          Quando encerrar um foco, ele aparece aqui.
+                        </StatusAlert>
+                      )}
+
+                      <h3 className="subheading">Links e anexos</h3>
+                      <div className="sessionForm compactForm">
+                        <label>
+                          Titulo
+                          <input
+                            value={artifactTitle}
+                            onChange={(event) =>
+                              setArtifactTitle(event.target.value)
+                            }
+                            placeholder="PR, doc, link"
+                          />
+                        </label>
+                        <label>
+                          URL
+                          <input
+                            value={artifactUrl}
+                            onChange={(event) =>
+                              setArtifactUrl(event.target.value)
+                            }
+                            placeholder="https://..."
+                          />
+                        </label>
+                        <div className="actionRow">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={handleAttachArtifact}
+                            disabled={contextBusy}
+                          >
+                            Anexar link
+                          </Button>
+                        </div>
+                      </div>
+
+                      <ul className="historyList">
+                        {(taskContext?.taskArtifacts ?? []).map((artifact) => (
+                          <li key={artifact.id}>
+                            <div>
+                              <strong>
+                                {artifact.title ?? artifact.artifactType}
+                              </strong>
+                              {artifact.sourceType ? (
+                                <Badge variant="outline">
+                                  {formatSourceTypeLabel(artifact.sourceType)}
+                                </Badge>
+                              ) : null}
+                              <span>{formatDateTime(artifact.createdAt)}</span>
+                              <code>{artifact.url ?? "-"}</code>
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  </div>
+                ) : (
+                  <StatusAlert status="warning" title="Escolha uma tarefa">
+                    A lista ao lado mostra tudo que esta no seu backlog.
+                  </StatusAlert>
+                )}
+              </div>
+            </div>
+          </section>
+        ) : null}
+
+        {activeView === "organizations" ? (
+          <section className="panel orgPanel">
+            <div className="orgLayout">
+              <aside className="orgSidebar">
+                <div className="backlogSidebarHeader">
+                  <SectionTitle icon={Building2}>Empresas</SectionTitle>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      setShowNewOrgForm((current) => !current);
+                      setOrgSetupError(null);
+                    }}
+                  >
+                    <Plus className="h-4 w-4" aria-hidden />
+                    Nova empresa
+                  </Button>
+                </div>
+
+                {showNewOrgForm ? (
+                  <div className="sessionForm compactForm">
+                    <label>
+                      Nome
+                      <input
+                        value={newOrgName}
+                        onChange={(event) => setNewOrgName(event.target.value)}
+                        placeholder="Empresa A"
+                      />
+                    </label>
+                    <label>
+                      Tipo
+                      <select
+                        value={newOrgKind}
+                        onChange={(event) => setNewOrgKind(event.target.value)}
+                      >
+                        <option value="company">Empresa</option>
+                        <option value="personal">Pessoal</option>
+                        <option value="community">Comunidade</option>
+                      </select>
+                    </label>
+                    <div className="actionRow">
+                      <Button
+                        type="button"
+                        onClick={() => void handleCreateOrganization()}
+                        disabled={orgSetupBusy || !newOrgName.trim()}
+                      >
+                        <Building2 className="h-4 w-4" aria-hidden />
+                        Criar empresa
+                      </Button>
+                    </div>
+                  </div>
+                ) : null}
+
+                <div className="repoList orgOrgList">
+                  {organizations.map((organization) => (
+                    <SelectableListItem
+                      key={organization.id}
+                      active={orgSetupSelectedId === organization.id}
+                      onClick={() => {
+                        setOrgSetupSelectedId(organization.id);
+                        setOrgSetupError(null);
+                      }}
+                      leading={
+                        <OrganizationAvatar
+                          name={organization.name}
+                          kind={organization.kind}
+                          logoUrl={getOrganizationLogoUrl(organization.id)}
+                          size="sm"
+                        />
+                      }
+                      title={organization.name}
+                      subtitle={formatOrganizationKind(organization.kind)}
+                    >
+                      {organization.gitUserName ? (
+                        <Badge variant="outline">
+                          {organization.gitUserName}
+                        </Badge>
+                      ) : (
+                        <Badge variant="warning">Sem identidade Git</Badge>
+                      )}
+                      <span>
+                        {
+                          projects.filter(
+                            (project) =>
+                              project.organizationId === organization.id,
+                          ).length
+                        }{" "}
+                        projetos
+                      </span>
+                    </SelectableListItem>
+                  ))}
+                </div>
+              </aside>
+
+              <div className="orgDetail">
+                {orgSetupError ? (
+                  <p className="errorText">{orgSetupError}</p>
+                ) : null}
+                {orgSetupSuccess ? (
+                  <p className="resultText">{orgSetupSuccess}</p>
+                ) : null}
+
+                {orgSetupOrganization ? (
+                  <>
+                    <FilterTabs
+                      items={ORG_DETAIL_TABS.map((tab) => ({
+                        id: tab.id,
+                        label: tab.label,
+                        icon: ORG_TAB_ICONS[tab.id],
+                      }))}
+                      value={orgDetailTab}
+                      onValueChange={(value) => setOrgDetailTab(value)}
+                      aria-label="Secoes da empresa"
+                    />
+
+                    {orgDetailTab === "company" ? (
+                      <div className="orgDetailSection">
+                        <div className="orgProfileHeader">
                           <OrganizationAvatar
-                            name={orgEditName || orgSetupOrganization.name}
-                            kind={orgEditKind}
+                            name={orgSetupOrganization.name}
+                            kind={orgSetupOrganization.kind}
                             logoUrl={getOrganizationLogoUrl(
                               orgSetupOrganization.id,
                             )}
                             size="lg"
                           />
-                          <div className="actionRow">
-                            <Button
-                              type="button"
-                              variant="outline"
-                              onClick={() =>
-                                void handleUploadOrganizationLogo()
-                              }
-                              disabled={orgSetupBusy}
-                            >
-                              <Image className="h-4 w-4" aria-hidden />
-                              Escolher imagem
-                            </Button>
-                            {orgSetupOrganization.logoPath ? (
-                              <Button
-                                type="button"
-                                variant="outline"
-                                onClick={() =>
-                                  void handleRemoveOrganizationLogo()
-                                }
-                                disabled={orgSetupBusy}
-                              >
-                                Remover logo
-                              </Button>
-                            ) : null}
+                          <div className="orgProfileSummary">
+                            <strong>{orgSetupOrganization.name}</strong>
+                            <span>
+                              {formatOrganizationKind(
+                                orgSetupOrganization.kind,
+                              )}
+                            </span>
+                            <span>
+                              Perfil Git:{" "}
+                              {orgSetupOrganization.environmentName ?? "Padrao"}
+                            </span>
                           </div>
                         </div>
-                        <label>
-                          Nome
-                          <input
-                            value={orgEditName}
-                            onChange={(event) =>
-                              setOrgEditName(event.target.value)
-                            }
-                          />
-                        </label>
-                        <label>
-                          Tipo
-                          <select
-                            value={orgEditKind}
-                            onChange={(event) =>
-                              setOrgEditKind(event.target.value)
-                            }
-                          >
-                            <option value="company">Empresa</option>
-                            <option value="personal">Pessoal</option>
-                            <option value="community">Comunidade</option>
-                          </select>
-                        </label>
-                        <div className="actionRow">
-                          <Button
-                            type="button"
-                            variant="outline"
-                            onClick={() => void handleUpdateOrganization()}
-                            disabled={orgSetupBusy || !orgEditName.trim()}
-                          >
-                            <Save className="h-4 w-4" aria-hidden />
-                            Salvar empresa
-                          </Button>
+
+                        <div className="contextIdentityCard">
+                          <article>
+                            <span>Empresa</span>
+                            <strong>{orgSetupOrganization.name}</strong>
+                          </article>
+                          <article>
+                            <span>Tipo</span>
+                            <strong>
+                              {formatOrganizationKind(
+                                orgSetupOrganization.kind,
+                              )}
+                            </strong>
+                          </article>
+                          <article>
+                            <span>Perfil Git</span>
+                            <strong>
+                              {orgSetupOrganization.environmentName ?? "Padrao"}
+                            </strong>
+                          </article>
                         </div>
-                      </div>
-                    </div>
-                  ) : null}
 
-                  {orgDetailTab === "projects" ? (
-                    <div className="orgDetailSection">
-                      <div className="sessionForm compactForm">
-                        <label>
-                          Nome do projeto
-                          <input
-                            value={newOrgProjectName}
-                            onChange={(event) =>
-                              setNewOrgProjectName(event.target.value)
-                            }
-                            placeholder="IAM Platform"
-                          />
-                        </label>
-                        <label>
-                          Descricao (opcional)
-                          <Textarea
-                            value={newOrgProjectDescription}
-                            onChange={(event) =>
-                              setNewOrgProjectDescription(event.target.value)
-                            }
-                          />
-                        </label>
-                        <div className="actionRow">
-                          <Button
-                            type="button"
-                            onClick={() => void handleCreateOrgProject()}
-                            disabled={orgSetupBusy || !newOrgProjectName.trim()}
-                          >
-                            Novo projeto
-                          </Button>
-                        </div>
-                      </div>
-
-                      <ul className="historyList">
-                        {orgSetupProjects.map((project) => (
-                          <li key={project.id}>
-                            <div>
-                              <strong>{project.name}</strong>
-                              <span>
-                                {project.description?.trim() || "Sem descricao"}
-                              </span>
-                            </div>
-                            <Button
-                              type="button"
-                              variant="outline"
-                              onClick={() =>
-                                void handleArchiveOrgProject(project.id)
-                              }
-                              disabled={orgSetupBusy}
-                            >
-                              Arquivar
-                            </Button>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  ) : null}
-
-                  {orgDetailTab === "repos" ? (
-                    <div className="orgDetailSection">
-                      <div className="sessionForm compactForm">
-                        <label>
-                          Projeto (opcional)
-                          <select
-                            value={orgLinkProjectId}
-                            onChange={(event) =>
-                              setOrgLinkProjectId(event.target.value)
-                            }
-                          >
-                            <option value="">Sem projeto</option>
-                            {orgSetupProjects.map((project) => (
-                              <option key={project.id} value={project.id}>
-                                {project.name}
-                              </option>
+                        {orgSetupGaps.length > 0 ? (
+                          <div className="todayStatusChips">
+                            {orgSetupGaps.map((gap) => (
+                              <Badge key={gap} variant="warning">
+                                {gap}
+                              </Badge>
                             ))}
-                          </select>
-                        </label>
-                        <LocalPathField
-                          path={orgLinkRepoPath}
-                          inspecting={orgLinkInspecting}
-                          onPathChange={(value) => {
-                            setOrgLinkRepoPath(value);
-                            setOrgLinkInspection(null);
-                          }}
-                          onBrowse={async () => {
-                            const picked =
-                              await pickLocalFolder(orgLinkRepoPath);
-                            if (!picked) return;
-                            setOrgLinkRepoPath(picked);
-                            setOrgLinkInspection(null);
-                          }}
-                          onInspect={() =>
-                            void inspectLocalProjectPath(orgLinkRepoPath, {
-                              setInspection: setOrgLinkInspection,
-                              setPath: setOrgLinkRepoPath,
-                              setError: setOrgSetupError,
-                              setInspecting: setOrgLinkInspecting,
-                              onDetected: (inspection) => {
-                                if (
-                                  !orgLinkRepoName.trim() &&
-                                  inspection.suggestedName
-                                ) {
-                                  setOrgLinkRepoName(inspection.suggestedName);
-                                }
-                                if (
-                                  !orgLinkRepoRemote.trim() &&
-                                  inspection.remoteUrl
-                                ) {
-                                  setOrgLinkRepoRemote(inspection.remoteUrl);
-                                }
-                              },
-                            })
-                          }
-                        />
-                        <label>
-                          Nome do repositorio
-                          <input
-                            value={orgLinkRepoName}
-                            onChange={(event) =>
-                              setOrgLinkRepoName(event.target.value)
-                            }
-                          />
-                        </label>
-                        <label>
-                          Remoto (opcional)
-                          <input
-                            value={orgLinkRepoRemote}
-                            onChange={(event) =>
-                              setOrgLinkRepoRemote(event.target.value)
-                            }
-                          />
-                        </label>
-                        <div className="actionRow">
-                          <Button
-                            type="button"
-                            onClick={() => void handleOrgLinkRepository()}
-                            disabled={
-                              orgSetupBusy ||
-                              !orgLinkRepoName.trim() ||
-                              !orgLinkRepoPath.trim() ||
-                              !orgLinkInspection?.isGitRepo
-                            }
-                          >
-                            Vincular repo
-                          </Button>
-                        </div>
-                      </div>
-
-                      <div className="sessionForm compactForm">
-                        <label>
-                          Reassociar repositorio
-                          <select
-                            value={reassignRepoId}
-                            onChange={(event) =>
-                              setReassignRepoId(event.target.value)
-                            }
-                          >
-                            <option value="">Selecione</option>
-                            {orgSetupRepositories.map((repository) => (
-                              <option key={repository.id} value={repository.id}>
-                                {repository.name}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                        <label>
-                          Projeto
-                          <select
-                            value={reassignProjectId}
-                            onChange={(event) =>
-                              setReassignProjectId(event.target.value)
-                            }
-                          >
-                            <option value="">Sem projeto</option>
-                            {orgSetupProjects.map((project) => (
-                              <option key={project.id} value={project.id}>
-                                {project.name}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                        <div className="actionRow">
-                          <Button
-                            type="button"
-                            variant="outline"
-                            onClick={() => void handleReassignRepository()}
-                            disabled={orgSetupBusy || !reassignRepoId}
-                          >
-                            Reassociar
-                          </Button>
-                        </div>
-                      </div>
-
-                      <ul className="historyList orgRepoMapping">
-                        {orgSetupRepositories.map((repository) => (
-                          <li key={repository.id}>
-                            <div>
-                              <strong>{repository.name}</strong>
-                              <span>
-                                {repository.projectName ?? "Sem projeto"} ·{" "}
-                                {repository.localPath ?? "Sem pasta local"}
-                              </span>
-                            </div>
-                            <Button
-                              type="button"
-                              variant="outline"
-                              onClick={() => openGitContextForRepo(repository)}
-                            >
-                              Ir para troca de contexto
-                            </Button>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  ) : null}
-
-                  {orgDetailTab === "identity" ? (
-                    <div className="orgDetailSection">
-                      <div className="orgIdentityInfoCard">
-                        <SectionTitle icon={Info}>
-                          Como funciona o contexto Git
-                        </SectionTitle>
-                        <ul className="orgIdentityInfoList">
-                          <li>
-                            <strong>Salvar identidade</strong> grava o perfil da
-                            empresa no WCP (alias SSH, user.name, email). Nao
-                            altera o repo local.
-                          </li>
-                          <li>
-                            <strong>Aplicar identidade</strong> grava{" "}
-                            <code>user.name</code> e <code>user.email</code> no
-                            repo — autor dos commits. Nao muda o remoto SSH.
-                          </li>
-                          <li>
-                            <strong>Corrigir remoto</strong> altera{" "}
-                            <code>remote.origin.url</code> para usar o alias SSH
-                            do perfil (ex.:{" "}
-                            <code>git@github_gok:org/repo.git</code>). Define
-                            qual chave/conta autentica no push.
-                          </li>
-                          <li>
-                            <strong>Aplicar contexto completo</strong> faz
-                            identidade + remoto num passo. Autenticacao SSH e
-                            autor do commit sao camadas diferentes.
-                          </li>
-                        </ul>
-                      </div>
-
-                      <div className="sessionForm compactForm orgIdentityImportPanel">
-                        <SectionTitle icon={ScanSearch}>
-                          Importar do repositorio
-                        </SectionTitle>
-                        <p className="muted">
-                          Preenche o perfil Git a partir de um repo vinculado.
-                          Revise os campos e clique em Salvar identidade.
-                        </p>
-
-                        {orgSetupRepositories.filter((repository) =>
-                          repository.localPath?.trim(),
-                        ).length === 0 ? (
-                          <StatusAlert
-                            status="warning"
-                            title="Nenhum repo inspecionavel"
-                          >
-                            Vincule um repositorio com pasta local na aba Repos
-                            antes de importar a identidade.
-                          </StatusAlert>
+                          </div>
                         ) : (
-                          <>
-                            {orgSetupGaps.length > 0 &&
-                            !orgIdentityImportPreview ? (
-                              <StatusAlert
-                                status="warning"
-                                title="Identidade incompleta"
-                              >
-                                Importe automaticamente de um repo vinculado
-                                para preencher user.name, host e alias SSH.
-                              </StatusAlert>
-                            ) : null}
+                          <StatusAlert
+                            status="ok"
+                            title="Contexto basico pronto"
+                          >
+                            Empresa, perfil Git e repos podem ser usados no
+                            fluxo de trabalho.
+                          </StatusAlert>
+                        )}
 
-                            <label>
-                              Repositorio
-                              <select
-                                value={orgIdentityImportRepoId ?? ""}
-                                onChange={(event) => {
-                                  setOrgIdentityImportRepoId(
-                                    event.target.value || null,
-                                  );
-                                  setOrgIdentityImportPreview(null);
-                                }}
-                              >
-                                {orgSetupRepositories
-                                  .filter((repository) =>
-                                    repository.localPath?.trim(),
-                                  )
-                                  .map((repository) => (
-                                    <option
-                                      key={repository.id}
-                                      value={repository.id}
-                                    >
-                                      {repository.name}
-                                      {repository.localPath
-                                        ? ` · ${repository.localPath}`
-                                        : ""}
-                                    </option>
-                                  ))}
-                              </select>
-                            </label>
-
+                        <div className="sessionForm compactForm">
+                          <SectionTitle icon={Image}>
+                            Logo da empresa
+                          </SectionTitle>
+                          <div className="orgLogoField">
+                            <OrganizationAvatar
+                              name={orgEditName || orgSetupOrganization.name}
+                              kind={orgEditKind}
+                              logoUrl={getOrganizationLogoUrl(
+                                orgSetupOrganization.id,
+                              )}
+                              size="lg"
+                            />
                             <div className="actionRow">
                               <Button
                                 type="button"
                                 variant="outline"
                                 onClick={() =>
-                                  void handleImportOrganizationIdentity()
+                                  void handleUploadOrganizationLogo()
                                 }
-                                disabled={
-                                  orgSetupBusy || !orgIdentityImportRepoId
-                                }
+                                disabled={orgSetupBusy}
                               >
-                                <ScanSearch className="h-4 w-4" aria-hidden />
-                                Importar identidade
+                                <Image className="h-4 w-4" aria-hidden />
+                                Escolher imagem
                               </Button>
-                            </div>
-
-                            {orgIdentityImportPreview ? (
-                              <StatusAlert
-                                status="ok"
-                                title={`Importado de ${orgIdentityImportPreview.repositoryName}`}
-                              >
-                                <ul className="identityImportSources">
-                                  {orgIdentityImportPreview.sources.map(
-                                    (source) => (
-                                      <li key={source}>{source}</li>
-                                    ),
-                                  )}
-                                </ul>
-                                <p className="identityImportHint">
-                                  Campos preenchidos abaixo. Clique em{" "}
-                                  <strong>Salvar identidade</strong> para
-                                  persistir.
-                                </p>
-                              </StatusAlert>
-                            ) : null}
-                          </>
-                        )}
-                      </div>
-
-                      <div className="orgIdentityGrid sessionForm compactForm">
-                        <label>
-                          Provider type
-                          <select
-                            value={orgEnvProviderType}
-                            onChange={(event) => {
-                              markOrgEnvFormDirty();
-                              setOrgEnvProviderType(event.target.value);
-                            }}
-                          >
-                            <option value="">Selecione</option>
-                            <option value="github">GitHub</option>
-                            <option value="gitlab">GitLab</option>
-                            <option value="bitbucket">Bitbucket</option>
-                            <option value="gitea">Gitea</option>
-                            <option value="azure">Azure</option>
-                            <option value="other">Outro</option>
-                          </select>
-                        </label>
-                        <label>
-                          Provider host
-                          <input
-                            value={orgEnvProviderHost}
-                            onChange={(event) => {
-                              markOrgEnvFormDirty();
-                              setOrgEnvProviderHost(event.target.value);
-                            }}
-                          />
-                        </label>
-                        <label>
-                          Alias SSH
-                          {orgIdentitySshInputMode === "selector" ? (
-                            <div className="orgIdentitySshSelectorRow">
-                              <select
-                                value={orgIdentitySelectedSshHost}
-                                onChange={(event) => {
-                                  const entry = sshConfigHosts.find(
-                                    (host) =>
-                                      host.hostAlias === event.target.value,
-                                  );
-                                  if (entry) {
-                                    applySshConfigHostEntry(entry);
-                                  }
-                                }}
-                                disabled={
-                                  sshConfigHostsLoading ||
-                                  sshConfigHosts.length === 0
-                                }
-                              >
-                                <option value="">
-                                  {sshConfigHostsLoading
-                                    ? "Carregando ~/.ssh/config..."
-                                    : "Selecione um host SSH"}
-                                </option>
-                                {Array.from(
-                                  groupSshConfigHostsBySection(sshConfigHosts),
-                                ).map(([sectionLabel, hosts]) => (
-                                  <optgroup
-                                    key={sectionLabel}
-                                    label={sectionLabel}
-                                  >
-                                    {hosts.map((entry) => (
-                                      <option
-                                        key={entry.hostAlias}
-                                        value={entry.hostAlias}
-                                      >
-                                        {formatSshConfigHostOptionLabel(entry)}
-                                      </option>
-                                    ))}
-                                  </optgroup>
-                                ))}
-                              </select>
-                              <Button
-                                type="button"
-                                variant="outline"
-                                onClick={() =>
-                                  setOrgIdentitySshInputMode("manual")
-                                }
-                              >
-                                Digitar manualmente
-                              </Button>
-                            </div>
-                          ) : (
-                            <div className="orgIdentitySshSelectorRow">
-                              <input
-                                value={orgEnvSshHostAlias}
-                                onChange={(event) => {
-                                  markOrgEnvFormDirty();
-                                  setOrgEnvSshHostAlias(event.target.value);
-                                  setOrgIdentitySelectedSshHost("");
-                                }}
-                                placeholder="github_gok"
-                              />
-                              {sshConfigHosts.length > 0 ? (
+                              {orgSetupOrganization.logoPath ? (
                                 <Button
                                   type="button"
                                   variant="outline"
-                                  onClick={() => {
-                                    setOrgIdentitySshInputMode("selector");
-                                    const match = sshConfigHosts.find(
-                                      (entry) =>
-                                        entry.hostAlias ===
-                                        orgEnvSshHostAlias.trim(),
-                                    );
-                                    if (match) {
-                                      setOrgIdentitySelectedSshHost(
-                                        match.hostAlias,
-                                      );
-                                    }
-                                  }}
+                                  onClick={() =>
+                                    void handleRemoveOrganizationLogo()
+                                  }
+                                  disabled={orgSetupBusy}
                                 >
-                                  Usar seletor SSH
+                                  Remover logo
                                 </Button>
                               ) : null}
                             </div>
-                          )}
-                          {sshConfigHosts.length === 0 &&
-                          !sshConfigHostsLoading ? (
-                            <span className="muted fieldHint">
-                              Nenhum host encontrado em{" "}
-                              <code>~/.ssh/config</code>. Use comentarios{" "}
-                              <code># GitHub gok</code> acima de cada bloco{" "}
-                              <code>Host</code> para rotular o seletor.
-                            </span>
-                          ) : (
-                            <span className="muted fieldHint">
-                              Host do <code>~/.ssh/config</code> usado no remoto
-                              (ex. <code>git@github_gok:org/repo.git</code>). O
-                              provider host acima continua sendo o{" "}
-                              <code>HostName</code> (ex. <code>github.com</code>
-                              ).
-                            </span>
-                          )}
-                        </label>
-                        <label>
-                          Git user.name
-                          <input
-                            value={orgEnvGitUserName}
-                            onChange={(event) => {
-                              markOrgEnvFormDirty();
-                              setOrgEnvGitUserName(event.target.value);
-                            }}
-                          />
-                        </label>
-                        <label>
-                          Git user.email
-                          <input
-                            value={orgEnvGitUserEmail}
-                            onChange={(event) => {
-                              markOrgEnvFormDirty();
-                              setOrgEnvGitUserEmail(event.target.value);
-                            }}
-                          />
-                        </label>
-                        <label>
-                          Padrao de branch
-                          <input
-                            value={orgEnvBranchPattern}
-                            onChange={(event) => {
-                              markOrgEnvFormDirty();
-                              setOrgEnvBranchPattern(event.target.value);
-                            }}
-                            placeholder="feature/*"
-                          />
-                        </label>
-                        <label>
-                          Convencao de PR
-                          <input
-                            value={orgEnvPrConvention}
-                            onChange={(event) => {
-                              markOrgEnvFormDirty();
-                              setOrgEnvPrConvention(event.target.value);
-                            }}
-                          />
-                        </label>
-                        <label>
-                          Convencao de commit
-                          <input
-                            value={orgEnvCommitConvention}
-                            onChange={(event) => {
-                              markOrgEnvFormDirty();
-                              setOrgEnvCommitConvention(event.target.value);
-                            }}
-                          />
-                        </label>
-                      </div>
-
-                      <div className="sessionForm compactForm">
-                        <SectionTitle icon={Link2}>Links uteis</SectionTitle>
-                        {orgUsefulLinks.map((link, index) => (
-                          <div key={index} className="historyFilterRow">
-                            <label>
-                              Rotulo
-                              <input
-                                value={link.label}
-                                onChange={(event) => {
-                                  markOrgEnvFormDirty();
-                                  const next = [...orgUsefulLinks];
-                                  next[index] = {
-                                    ...next[index],
-                                    label: event.target.value,
-                                  };
-                                  setOrgUsefulLinks(next);
-                                }}
-                              />
-                            </label>
-                            <label>
-                              URL
-                              <input
-                                value={link.url}
-                                onChange={(event) => {
-                                  markOrgEnvFormDirty();
-                                  const next = [...orgUsefulLinks];
-                                  next[index] = {
-                                    ...next[index],
-                                    url: event.target.value,
-                                  };
-                                  setOrgUsefulLinks(next);
-                                }}
-                              />
-                            </label>
                           </div>
-                        ))}
-                        <div className="actionRow">
-                          <Button
-                            type="button"
-                            variant="outline"
-                            onClick={() => {
-                              markOrgEnvFormDirty();
-                              setOrgUsefulLinks((current) => [
-                                ...current,
-                                { label: "", url: "" },
-                              ]);
-                            }}
-                          >
-                            Adicionar link
-                          </Button>
-                          <Button
-                            type="button"
-                            onClick={() =>
-                              void handleSaveOrganizationEnvironment()
-                            }
-                            disabled={orgSetupBusy}
-                          >
-                            <Save className="h-4 w-4" aria-hidden />
-                            Salvar identidade
-                          </Button>
-                        </div>
-                      </div>
-
-                      <div className="orgRepoMapping">
-                        <p className="backlogSidebarTitle">
-                          Mapeamento por repositorio
-                        </p>
-                        <label>
-                          Repositorio
-                          <select
-                            value={orgIdentityRepoId ?? ""}
-                            onChange={(event) => {
-                              setOrgIdentityRepoId(event.target.value || null);
-                              setOrgIdentityGuardrail(null);
-                              setOrgIdentityResult(null);
-                            }}
-                          >
-                            <option value="">Selecione</option>
-                            {orgSetupRepositories.map((repository) => (
-                              <option key={repository.id} value={repository.id}>
-                                {repository.name}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                        {orgIdentityRemoteFixPreview ? (
-                          <StatusAlert
-                            status="warning"
-                            title="Remoto SSH divergente do perfil"
-                          >
-                            O <code>origin</code> usa{" "}
-                            <code>
-                              {parseSshRemoteHostAlias(
-                                orgIdentityRemoteUrl ?? "",
-                              ) ?? "?"}
-                            </code>
-                            , mas o perfil espera{" "}
-                            <code>{orgIdentitySshAlias}</code>. Ao corrigir:{" "}
-                            <code>{orgIdentityRemoteFixPreview}</code>
-                          </StatusAlert>
-                        ) : null}
-                        <div className="actionRow">
-                          <Button
-                            type="button"
-                            onClick={() =>
-                              void handleApplyFullRepositoryContext()
-                            }
-                            disabled={
-                              orgIdentityBusy ||
-                              !orgIdentityRepoId ||
-                              !orgIdentitySshAlias
-                            }
-                          >
-                            <ArrowRightLeft className="h-4 w-4" aria-hidden />
-                            Aplicar contexto completo
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            onClick={() => void handleApplyOrgIdentity()}
-                            disabled={orgIdentityBusy || !orgIdentityRepoId}
-                          >
-                            Aplicar identidade
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            onClick={() => void handleFixRepositoryRemote()}
-                            disabled={
-                              orgIdentityBusy ||
-                              !orgIdentityRepoId ||
-                              !orgIdentityRemoteFixPreview
-                            }
-                          >
-                            <GitBranch className="h-4 w-4" aria-hidden />
-                            Corrigir remoto
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            onClick={() => void handleValidateOrgIdentity()}
-                            disabled={orgIdentityBusy || !orgIdentityRepoId}
-                          >
-                            Validar contexto
-                          </Button>
-                        </div>
-                        {orgIdentityResult ? (
-                          <p className="resultText">{orgIdentityResult}</p>
-                        ) : null}
-                        {orgIdentityGuardrail?.validation?.checks.map(
-                          (check) => (
-                            <StatusAlert
-                              key={check.key}
-                              status={check.status === "ok" ? "ok" : "warning"}
-                              title={check.message}
-                            >
-                              {formatValidationCheckDetail(check)}
-                            </StatusAlert>
-                          ),
-                        )}
-                      </div>
-                    </div>
-                  ) : null}
-
-                  {orgDetailTab === "integrations" ? (
-                    <div className="orgDetailSection orgIntegrationsPanel">
-                      <div className="orgIdentityInfoCard">
-                        <SectionTitle icon={Info}>
-                          Integracoes desta empresa
-                        </SectionTitle>
-                        <p className="muted">
-                          Configurando integracoes para{" "}
-                          <strong>{orgSetupOrganization?.name}</strong>. Cada
-                          empresa tem conexoes Jira e ClickUp independentes —
-                          trocar de empresa nao compartilha tokens nem sync
-                          entre elas.
-                        </p>
-                        <ul className="orgIdentityInfoList">
-                          <li>
-                            Tarefas atribuidas a voce sao espelhadas no backlog
-                            WCP como <strong>importadas</strong> (somente
-                            leitura na v1).
-                          </li>
-                          <li>
-                            Prazos usam o campo <code>due</code> da ferramenta
-                            externa (<code>scheduled_for</code> no WCP).
-                          </li>
-                          <li>
-                            O sync nao altera repositorios Git nem identidade.
-                          </li>
-                          <li>
-                            No sync, o status externo prevalece sobre edicoes
-                            locais em tarefas importadas.
-                          </li>
-                        </ul>
-                      </div>
-
-                      {integrationMessage ? (
-                        <p className="resultText">{integrationMessage}</p>
-                      ) : null}
-
-                      <div className="sessionForm compactForm orgIntegrationCard">
-                        <SectionTitle icon={Plug}>Jira Cloud</SectionTitle>
-                        {getPmConnection("jira") ? (
-                          <Badge variant="success">
-                            Conectado nesta empresa
-                          </Badge>
-                        ) : (
-                          <Badge variant="outline">
-                            Nao conectado nesta empresa
-                          </Badge>
-                        )}
-                        <p className="muted">
-                          Email + API token da Atlassian.{" "}
-                          <a
-                            href="https://support.atlassian.com/atlassian-account/docs/manage-api-tokens-for-your-atlassian-account/"
-                            target="_blank"
-                            rel="noreferrer"
-                          >
-                            Como gerar token
-                          </a>
-                        </p>
-                        {getPmConnection("jira")?.lastSyncAt ? (
-                          <p className="muted">
-                            Ultima sync:{" "}
-                            {formatDateTime(
-                              getPmConnection("jira")?.lastSyncAt,
-                            )}
-                            {getPmConnection("jira")?.lastSyncError
-                              ? ` · Erro: ${getPmConnection("jira")?.lastSyncError}`
-                              : ""}
-                          </p>
-                        ) : null}
-                        <label>
-                          Site URL
-                          <input
-                            value={jiraSiteUrl}
-                            onChange={(event) =>
-                              setJiraSiteUrl(event.target.value)
-                            }
-                            placeholder="https://sua-empresa.atlassian.net"
-                          />
-                        </label>
-                        <label>
-                          Email
-                          <input
-                            type="email"
-                            value={jiraEmail}
-                            onChange={(event) =>
-                              setJiraEmail(event.target.value)
-                            }
-                            placeholder="voce@empresa.com"
-                          />
-                        </label>
-                        <label>
-                          API token
-                          <input
-                            type="password"
-                            value={jiraApiToken}
-                            onChange={(event) =>
-                              setJiraApiToken(event.target.value)
-                            }
-                            placeholder={
-                              getPmConnection("jira")?.hasCredentials
-                                ? "Deixe vazio no teste para usar salvo"
-                                : "Cole o token"
-                            }
-                          />
-                        </label>
-                        <div className="actionRow">
-                          <Button
-                            type="button"
-                            variant="outline"
-                            disabled={integrationBusy}
-                            onClick={() => void handleTestJiraConnection()}
-                          >
-                            Testar
-                          </Button>
-                          <Button
-                            type="button"
-                            disabled={integrationBusy}
-                            onClick={() => void handleSaveJiraConnection()}
-                          >
-                            Salvar
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            disabled={
-                              integrationBusy || !getPmConnection("jira")
-                            }
-                            onClick={() => void handleSyncPmTasks("jira")}
-                          >
-                            Sincronizar Jira
-                          </Button>
-                        </div>
-                      </div>
-
-                      <div className="sessionForm compactForm orgIntegrationCard">
-                        <SectionTitle icon={Plug}>ClickUp</SectionTitle>
-                        {getPmConnection("clickup") ? (
-                          <Badge variant="success">
-                            Conectado nesta empresa
-                          </Badge>
-                        ) : (
-                          <Badge variant="outline">
-                            Nao conectado nesta empresa
-                          </Badge>
-                        )}
-                        <p className="muted">
-                          Personal API token.{" "}
-                          <a
-                            href="https://clickup.com/api/developer-portal/authentication/"
-                            target="_blank"
-                            rel="noreferrer"
-                          >
-                            Documentacao
-                          </a>
-                        </p>
-                        {getPmConnection("clickup")?.lastSyncAt ? (
-                          <p className="muted">
-                            Ultima sync:{" "}
-                            {formatDateTime(
-                              getPmConnection("clickup")?.lastSyncAt,
-                            )}
-                            {getPmConnection("clickup")?.lastSyncError
-                              ? ` · Erro: ${getPmConnection("clickup")?.lastSyncError}`
-                              : ""}
-                          </p>
-                        ) : null}
-                        <label>
-                          API token
-                          <input
-                            type="password"
-                            value={clickUpApiToken}
-                            onChange={(event) =>
-                              setClickUpApiToken(event.target.value)
-                            }
-                            placeholder={
-                              getPmConnection("clickup")?.hasCredentials
-                                ? "Deixe vazio no teste para usar salvo"
-                                : "pk_..."
-                            }
-                          />
-                        </label>
-                        {clickUpTeams.length > 0 ? (
                           <label>
-                            Workspace (team)
-                            <select
-                              value={clickUpTeamId}
+                            Nome
+                            <input
+                              value={orgEditName}
                               onChange={(event) =>
-                                setClickUpTeamId(event.target.value)
+                                setOrgEditName(event.target.value)
+                              }
+                            />
+                          </label>
+                          <label>
+                            Tipo
+                            <select
+                              value={orgEditKind}
+                              onChange={(event) =>
+                                setOrgEditKind(event.target.value)
                               }
                             >
-                              <option value="">Selecione</option>
-                              {clickUpTeams.map((team) => (
-                                <option key={team.id} value={team.id}>
-                                  {team.name}
-                                </option>
-                              ))}
+                              <option value="company">Empresa</option>
+                              <option value="personal">Pessoal</option>
+                              <option value="community">Comunidade</option>
                             </select>
                           </label>
-                        ) : (
+                          <div className="actionRow">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              onClick={() => void handleUpdateOrganization()}
+                              disabled={orgSetupBusy || !orgEditName.trim()}
+                            >
+                              <Save className="h-4 w-4" aria-hidden />
+                              Salvar empresa
+                            </Button>
+                          </div>
+                        </div>
+
+                        <div className="orgDangerZone sessionForm compactForm">
+                          <SectionTitle icon={Trash2}>
+                            Zona de perigo
+                          </SectionTitle>
                           <p className="muted">
-                            Clique em Testar para carregar os workspaces.
+                            Exclui esta empresa e tudo vinculado: projetos,
+                            repositorios, tarefas, integracoes e historico.
                           </p>
-                        )}
-                        <div className="actionRow">
                           <Button
                             type="button"
-                            variant="outline"
-                            disabled={integrationBusy}
-                            onClick={() => void handleTestClickUpConnection()}
+                            variant="destructive"
+                            onClick={() => void handleDeleteOrganization()}
+                            disabled={orgSetupBusy}
                           >
-                            Testar
-                          </Button>
-                          <Button
-                            type="button"
-                            disabled={integrationBusy}
-                            onClick={() => void handleSaveClickUpConnection()}
-                          >
-                            Salvar
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            disabled={
-                              integrationBusy || !getPmConnection("clickup")
-                            }
-                            onClick={() => void handleSyncPmTasks("clickup")}
-                          >
-                            Sincronizar ClickUp
+                            Excluir empresa
                           </Button>
                         </div>
                       </div>
+                    ) : null}
 
-                      <div className="actionRow">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          disabled={
-                            integrationBusy ||
-                            integrationConnections.length === 0
-                          }
-                          onClick={() => void handleSyncPmTasks()}
-                        >
-                          Sincronizar todas as integracoes
-                        </Button>
-                      </div>
-                    </div>
-                  ) : null}
-                </>
-              ) : (
-                <StatusAlert status="warning" title="Nenhuma empresa">
-                  Crie a primeira empresa para organizar projetos e repos.
-                </StatusAlert>
-              )}
-            </div>
-          </div>
-        </section>
-      ) : null}
-
-      {activeView === "repos" ? (
-        <section className="panel repoPanel">
-          <div className="repoHeader">
-            <div className="panelHeading">
-              <h2>Seus projetos</h2>
-              <p className="muted">
-                Prepare o ambiente Git antes de comecar a codar.
-              </p>
-            </div>
-            <div className="resultStack">
-              {applyResult ? <p className="resultText">{applyResult}</p> : null}
-              {hookResult ? <p className="resultText">{hookResult}</p> : null}
-              {contextReady ? (
-                <Badge variant="success">Pronto para trabalhar</Badge>
-              ) : null}
-            </div>
-          </div>
-
-          <section className="contextSwitchPanel">
-            <div className="panelHeading">
-              <h3 className="subheading">Troca de contexto</h3>
-              <p className="muted">
-                Siga os passos para evitar erro de identidade ou host errado.
-              </p>
-            </div>
-
-            <ContextStepsBar
-              steps={CONTEXT_STEPS}
-              currentStep={contextStep}
-              completedSteps={completedContextSteps}
-              onStepClick={goToContextStep}
-            />
-
-            <p className="contextStepHint">{CONTEXT_STEP_HINTS[contextStep]}</p>
-
-            {contextChainLabel && contextStep >= 1 && contextStep <= 3 ? (
-              <div className="contextChainCard">
-                <SectionTitle icon={GitBranch}>Cadeia de contexto</SectionTitle>
-                {selectedOrganization ? (
-                  <div className="contextChainHeader">
-                    <OrganizationAvatar
-                      name={selectedOrganization.name}
-                      kind={selectedOrganization.kind}
-                      logoUrl={getOrganizationLogoUrl(selectedOrganization.id)}
-                      size="sm"
-                    />
-                    <p className="dayBriefLine dayBriefLine-strong">
-                      {contextChainLabel}
-                    </p>
-                  </div>
-                ) : (
-                  <p className="dayBriefLine dayBriefLine-strong">
-                    {contextChainLabel}
-                  </p>
-                )}
-              </div>
-            ) : null}
-
-            <div className="contextStepContent">
-              {contextStep === 1 ? (
-                <>
-                  <div className="historyFilterRow">
-                    <label>
-                      Empresa
-                      <select
-                        value={selectedOrganizationId}
-                        onChange={(event) =>
-                          handleOrganizationChange(event.target.value)
-                        }
-                      >
-                        <option value="all">Selecione uma empresa</option>
-                        {organizations.map((organization) => (
-                          <option key={organization.id} value={organization.id}>
-                            {organization.name}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  </div>
-
-                  {selectedOrganization ? (
-                    <div className="contextIdentityCard">
-                      <article className="contextIdentityHero">
-                        <OrganizationAvatar
-                          name={selectedOrganization.name}
-                          kind={selectedOrganization.kind}
-                          logoUrl={getOrganizationLogoUrl(
-                            selectedOrganization.id,
-                          )}
-                          size="md"
-                        />
-                        <div>
-                          <span>Empresa / ambiente</span>
-                          <strong>
-                            {selectedOrganization.name}
-                            {selectedOrganization.environmentName
-                              ? ` · ${selectedOrganization.environmentName}`
-                              : ""}
-                          </strong>
+                    {orgDetailTab === "projects" ? (
+                      <div className="orgDetailSection">
+                        <div className="sessionForm compactForm">
+                          <label>
+                            Nome do projeto
+                            <input
+                              value={newOrgProjectName}
+                              onChange={(event) =>
+                                setNewOrgProjectName(event.target.value)
+                              }
+                              placeholder="IAM Platform"
+                            />
+                          </label>
+                          <label>
+                            Descricao (opcional)
+                            <Textarea
+                              value={newOrgProjectDescription}
+                              onChange={(event) =>
+                                setNewOrgProjectDescription(event.target.value)
+                              }
+                            />
+                          </label>
+                          <div className="actionRow">
+                            <Button
+                              type="button"
+                              onClick={() => void handleCreateOrgProject()}
+                              disabled={
+                                orgSetupBusy || !newOrgProjectName.trim()
+                              }
+                            >
+                              Novo projeto
+                            </Button>
+                          </div>
                         </div>
-                      </article>
-                      <article>
-                        <span>Provider host</span>
-                        <strong>
-                          {selectedOrganization.providerHost ??
-                            "Nao configurado"}
-                        </strong>
-                      </article>
-                      <article>
-                        <span>Git user.name</span>
-                        <strong>
-                          {selectedOrganization.gitUserName ??
-                            "Nao configurado"}
-                        </strong>
-                      </article>
-                      <article>
-                        <span>Git user.email</span>
-                        <strong>
-                          {selectedOrganization.gitUserEmail ??
-                            "Nao configurado"}
-                        </strong>
-                      </article>
-                      <article>
-                        <span>Alias SSH</span>
-                        <strong>
-                          {selectedOrganization.sshHostAlias ??
-                            "Nao configurado"}
-                        </strong>
-                      </article>
-                      <article>
-                        <span>Padrao de branch</span>
-                        <strong>
-                          {selectedOrganization.branchPattern ??
-                            "Nao configurado"}
-                        </strong>
-                      </article>
-                    </div>
-                  ) : organizations.length === 0 ? (
-                    <StatusAlert
-                      status="warning"
-                      title="Nenhuma empresa cadastrada"
-                    >
-                      Cadastre uma empresa antes de preparar o contexto Git.
-                      <div className="actionRow">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          onClick={() => switchActiveView("organizations")}
-                        >
-                          Cadastrar empresa
-                        </Button>
+
+                        <ul className="historyList">
+                          {orgSetupProjects.map((project) => (
+                            <li key={project.id}>
+                              <div>
+                                <strong>{project.name}</strong>
+                                <span>
+                                  {project.description?.trim() ||
+                                    "Sem descricao"}
+                                </span>
+                              </div>
+                              <Button
+                                type="button"
+                                variant="destructive"
+                                onClick={() =>
+                                  void handleDeleteOrgProject(project)
+                                }
+                                disabled={orgSetupBusy}
+                              >
+                                Excluir
+                              </Button>
+                            </li>
+                          ))}
+                        </ul>
                       </div>
-                    </StatusAlert>
-                  ) : (
-                    <StatusAlert status="warning" title="Escolha a empresa">
-                      Selecione acima qual contexto voce quer preparar.
-                    </StatusAlert>
-                  )}
+                    ) : null}
 
-                  <div className="actionRow">
-                    <Button
-                      type="button"
-                      disabled={selectedOrganizationId === "all"}
-                      onClick={() => setContextStep(2)}
-                    >
-                      Continuar para repositorio
-                    </Button>
-                  </div>
-                </>
-              ) : null}
-
-              {contextStep === 2 ? (
-                <>
-                  <p className="muted contextOrgLine">
-                    <OrganizationAvatar
-                      name={selectedOrganization?.name ?? "Empresa"}
-                      kind={selectedOrganization?.kind}
-                      logoUrl={getOrganizationLogoUrl(selectedOrganization?.id)}
-                      size="sm"
-                    />
-                    <span>
-                      Empresa:{" "}
-                      <strong>
-                        {selectedOrganization?.name ?? "Nao selecionada"}
-                      </strong>
-                    </span>
-                  </p>
-
-                  <div className="addProjectPanel">
-                    <div className="panelHeading">
-                      <h4 className="subheading">
-                        Adicionar repositorio local
-                      </h4>
-                      <p className="muted">
-                        Aponte para uma pasta Git real da sua maquina para
-                        conseguir conferir o ambiente.
-                      </p>
-                    </div>
-
-                    {!showAddProjectForm ? (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={() => {
-                          resetAddProjectForm();
-                          setShowAddProjectForm(true);
-                        }}
-                      >
-                        Cadastrar pasta Git
-                      </Button>
-                    ) : (
-                      <div className="sessionForm compactForm">
-                        <LocalPathField
-                          path={newProjectPath}
-                          inspecting={newProjectInspecting}
-                          onPathChange={(value) => {
-                            setNewProjectPath(value);
-                            setNewProjectInspection(null);
-                            setNewProjectError(null);
-                          }}
-                          onBrowse={() => void browseNewProjectPath()}
-                          onInspect={() => void inspectNewProjectPath()}
-                        />
-                        <label>
-                          Projeto (opcional)
-                          <select
-                            value={newRepoProjectId}
-                            onChange={(event) =>
-                              setNewRepoProjectId(event.target.value)
-                            }
-                          >
-                            <option value="">Sem projeto</option>
-                            {projects
-                              .filter(
-                                (project) =>
-                                  project.organizationId ===
-                                  selectedOrganizationId,
-                              )
-                              .map((project) => (
+                    {orgDetailTab === "repos" ? (
+                      <div className="orgDetailSection">
+                        <div className="sessionForm compactForm">
+                          <label>
+                            Projeto (opcional)
+                            <select
+                              value={orgLinkProjectId}
+                              onChange={(event) =>
+                                setOrgLinkProjectId(event.target.value)
+                              }
+                            >
+                              <option value="">Sem projeto</option>
+                              {orgSetupProjects.map((project) => (
                                 <option key={project.id} value={project.id}>
                                   {project.name}
                                 </option>
                               ))}
-                          </select>
-                        </label>
-                        <label>
-                          Nome do repositorio
-                          <input
-                            value={newProjectName}
-                            onChange={(event) =>
-                              setNewProjectName(event.target.value)
+                            </select>
+                          </label>
+                          <LocalPathField
+                            path={orgLinkRepoPath}
+                            inspecting={orgLinkInspecting}
+                            onPathChange={(value) => {
+                              setOrgLinkRepoPath(value);
+                              setOrgLinkInspection(null);
+                            }}
+                            onBrowse={async () => {
+                              const picked =
+                                await pickLocalFolder(orgLinkRepoPath);
+                              if (!picked) return;
+                              setOrgLinkRepoPath(picked);
+                              setOrgLinkInspection(null);
+                            }}
+                            onInspect={() =>
+                              void inspectLocalProjectPath(orgLinkRepoPath, {
+                                setInspection: setOrgLinkInspection,
+                                setPath: setOrgLinkRepoPath,
+                                setError: setOrgSetupError,
+                                setInspecting: setOrgLinkInspecting,
+                                onDetected: (inspection) => {
+                                  if (
+                                    !orgLinkRepoName.trim() &&
+                                    inspection.suggestedName
+                                  ) {
+                                    setOrgLinkRepoName(
+                                      inspection.suggestedName,
+                                    );
+                                  }
+                                  if (
+                                    !orgLinkRepoRemote.trim() &&
+                                    inspection.remoteUrl
+                                  ) {
+                                    setOrgLinkRepoRemote(inspection.remoteUrl);
+                                  }
+                                },
+                              })
                             }
-                            placeholder="auth-api"
                           />
-                        </label>
-                        <label>
-                          Remoto (opcional)
-                          <input
-                            value={newProjectRemoteUrl}
-                            onChange={(event) =>
-                              setNewProjectRemoteUrl(event.target.value)
-                            }
-                            placeholder="git@host:org/repo.git"
-                          />
-                        </label>
+                          <label>
+                            Nome do repositorio
+                            <input
+                              value={orgLinkRepoName}
+                              onChange={(event) =>
+                                setOrgLinkRepoName(event.target.value)
+                              }
+                            />
+                          </label>
+                          <label>
+                            Remoto (opcional)
+                            <input
+                              value={orgLinkRepoRemote}
+                              onChange={(event) =>
+                                setOrgLinkRepoRemote(event.target.value)
+                              }
+                            />
+                          </label>
+                          <div className="actionRow">
+                            <Button
+                              type="button"
+                              onClick={() => void handleOrgLinkRepository()}
+                              disabled={
+                                orgSetupBusy ||
+                                !orgLinkRepoName.trim() ||
+                                !orgLinkRepoPath.trim() ||
+                                !orgLinkInspection?.isGitRepo
+                              }
+                            >
+                              Vincular repo
+                            </Button>
+                          </div>
+                        </div>
 
-                        {newProjectIdentityWarning ? (
-                          <StatusAlert
-                            status="warning"
-                            title="Identidade local diferente"
-                          >
-                            {newProjectIdentityWarning}
-                          </StatusAlert>
+                        <div className="sessionForm compactForm">
+                          <label>
+                            Reassociar repositorio
+                            <select
+                              value={reassignRepoId}
+                              onChange={(event) =>
+                                setReassignRepoId(event.target.value)
+                              }
+                            >
+                              <option value="">Selecione</option>
+                              {orgSetupRepositories.map((repository) => (
+                                <option
+                                  key={repository.id}
+                                  value={repository.id}
+                                >
+                                  {repository.name}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <label>
+                            Projeto
+                            <select
+                              value={reassignProjectId}
+                              onChange={(event) =>
+                                setReassignProjectId(event.target.value)
+                              }
+                            >
+                              <option value="">Sem projeto</option>
+                              {orgSetupProjects.map((project) => (
+                                <option key={project.id} value={project.id}>
+                                  {project.name}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <div className="actionRow">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              onClick={() => void handleReassignRepository()}
+                              disabled={orgSetupBusy || !reassignRepoId}
+                            >
+                              Reassociar
+                            </Button>
+                          </div>
+                        </div>
+
+                        <ul className="historyList orgRepoMapping">
+                          {orgSetupRepositories.map((repository) => (
+                            <li key={repository.id}>
+                              <div>
+                                <strong>{repository.name}</strong>
+                                <span>
+                                  {repository.projectName ?? "Sem projeto"} ·{" "}
+                                  {repository.localPath ?? "Sem pasta local"}
+                                </span>
+                              </div>
+                              <div className="actionRow">
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  onClick={() =>
+                                    openGitContextForRepo(repository)
+                                  }
+                                >
+                                  Ir para troca de contexto
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="destructive"
+                                  onClick={() =>
+                                    void handleDeleteRepository(repository)
+                                  }
+                                  disabled={orgSetupBusy}
+                                >
+                                  Excluir
+                                </Button>
+                              </div>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ) : null}
+
+                    {orgDetailTab === "identity" ? (
+                      <div className="orgDetailSection">
+                        <div className="orgIdentityInfoCard">
+                          <SectionTitle icon={Info}>
+                            Como funciona o contexto Git
+                          </SectionTitle>
+                          <ul className="orgIdentityInfoList">
+                            <li>
+                              <strong>Salvar identidade</strong> grava o perfil
+                              da empresa no WCP (alias SSH, user.name, email).
+                              Nao altera o repo local.
+                            </li>
+                            <li>
+                              <strong>Aplicar identidade</strong> grava{" "}
+                              <code>user.name</code> e <code>user.email</code>{" "}
+                              no repo — autor dos commits. Nao muda o remoto
+                              SSH.
+                            </li>
+                            <li>
+                              <strong>Corrigir remoto</strong> altera{" "}
+                              <code>remote.origin.url</code> para usar o alias
+                              SSH do perfil (ex.:{" "}
+                              <code>git@github_gok:org/repo.git</code>). Define
+                              qual chave/conta autentica no push.
+                            </li>
+                            <li>
+                              <strong>Aplicar contexto completo</strong> faz
+                              identidade + remoto num passo. Autenticacao SSH e
+                              autor do commit sao camadas diferentes.
+                            </li>
+                          </ul>
+                        </div>
+
+                        <div className="sessionForm compactForm orgIdentityImportPanel">
+                          <SectionTitle icon={ScanSearch}>
+                            Importar do repositorio
+                          </SectionTitle>
+                          <p className="muted">
+                            Preenche o perfil Git a partir de um repo vinculado.
+                            Revise os campos e clique em Salvar identidade.
+                          </p>
+
+                          {orgSetupRepositories.filter((repository) =>
+                            repository.localPath?.trim(),
+                          ).length === 0 ? (
+                            <StatusAlert
+                              status="warning"
+                              title="Nenhum repo inspecionavel"
+                            >
+                              Vincule um repositorio com pasta local na aba
+                              Repos antes de importar a identidade.
+                            </StatusAlert>
+                          ) : (
+                            <>
+                              {orgSetupGaps.length > 0 &&
+                              !orgIdentityImportPreview ? (
+                                <StatusAlert
+                                  status="warning"
+                                  title="Identidade incompleta"
+                                >
+                                  Importe automaticamente de um repo vinculado
+                                  para preencher user.name, host e alias SSH.
+                                </StatusAlert>
+                              ) : null}
+
+                              <label>
+                                Repositorio
+                                <select
+                                  value={orgIdentityImportRepoId ?? ""}
+                                  onChange={(event) => {
+                                    setOrgIdentityImportRepoId(
+                                      event.target.value || null,
+                                    );
+                                    setOrgIdentityImportPreview(null);
+                                  }}
+                                >
+                                  {orgSetupRepositories
+                                    .filter((repository) =>
+                                      repository.localPath?.trim(),
+                                    )
+                                    .map((repository) => (
+                                      <option
+                                        key={repository.id}
+                                        value={repository.id}
+                                      >
+                                        {repository.name}
+                                        {repository.localPath
+                                          ? ` · ${repository.localPath}`
+                                          : ""}
+                                      </option>
+                                    ))}
+                                </select>
+                              </label>
+
+                              <div className="actionRow">
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  onClick={() =>
+                                    void handleImportOrganizationIdentity()
+                                  }
+                                  disabled={
+                                    orgSetupBusy || !orgIdentityImportRepoId
+                                  }
+                                >
+                                  <ScanSearch className="h-4 w-4" aria-hidden />
+                                  Importar identidade
+                                </Button>
+                              </div>
+
+                              {orgIdentityImportPreview ? (
+                                <StatusAlert
+                                  status="ok"
+                                  title={`Importado de ${orgIdentityImportPreview.repositoryName}`}
+                                >
+                                  <ul className="identityImportSources">
+                                    {orgIdentityImportPreview.sources.map(
+                                      (source) => (
+                                        <li key={source}>{source}</li>
+                                      ),
+                                    )}
+                                  </ul>
+                                  <p className="identityImportHint">
+                                    Campos preenchidos abaixo. Clique em{" "}
+                                    <strong>Salvar identidade</strong> para
+                                    persistir.
+                                  </p>
+                                </StatusAlert>
+                              ) : null}
+                            </>
+                          )}
+                        </div>
+
+                        <div className="orgIdentityGrid sessionForm compactForm">
+                          <label>
+                            Provider type
+                            <select
+                              value={orgEnvProviderType}
+                              onChange={(event) => {
+                                markOrgEnvFormDirty();
+                                setOrgEnvProviderType(event.target.value);
+                              }}
+                            >
+                              <option value="">Selecione</option>
+                              <option value="github">GitHub</option>
+                              <option value="gitlab">GitLab</option>
+                              <option value="bitbucket">Bitbucket</option>
+                              <option value="gitea">Gitea</option>
+                              <option value="azure">Azure</option>
+                              <option value="other">Outro</option>
+                            </select>
+                          </label>
+                          <label>
+                            Provider host
+                            <input
+                              value={orgEnvProviderHost}
+                              onChange={(event) => {
+                                markOrgEnvFormDirty();
+                                setOrgEnvProviderHost(event.target.value);
+                              }}
+                            />
+                          </label>
+                          <label>
+                            Alias SSH
+                            {orgIdentitySshInputMode === "selector" ? (
+                              <div className="orgIdentitySshSelectorRow">
+                                <select
+                                  value={orgIdentitySelectedSshHost}
+                                  onChange={(event) => {
+                                    const entry = sshConfigHosts.find(
+                                      (host) =>
+                                        host.hostAlias === event.target.value,
+                                    );
+                                    if (entry) {
+                                      applySshConfigHostEntry(entry);
+                                    }
+                                  }}
+                                  disabled={
+                                    sshConfigHostsLoading ||
+                                    sshConfigHosts.length === 0
+                                  }
+                                >
+                                  <option value="">
+                                    {sshConfigHostsLoading
+                                      ? "Carregando ~/.ssh/config..."
+                                      : "Selecione um host SSH"}
+                                  </option>
+                                  {Array.from(
+                                    groupSshConfigHostsBySection(
+                                      sshConfigHosts,
+                                    ),
+                                  ).map(([sectionLabel, hosts]) => (
+                                    <optgroup
+                                      key={sectionLabel}
+                                      label={sectionLabel}
+                                    >
+                                      {hosts.map((entry) => (
+                                        <option
+                                          key={entry.hostAlias}
+                                          value={entry.hostAlias}
+                                        >
+                                          {formatSshConfigHostOptionLabel(
+                                            entry,
+                                          )}
+                                        </option>
+                                      ))}
+                                    </optgroup>
+                                  ))}
+                                </select>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  onClick={() =>
+                                    setOrgIdentitySshInputMode("manual")
+                                  }
+                                >
+                                  Digitar manualmente
+                                </Button>
+                              </div>
+                            ) : (
+                              <div className="orgIdentitySshSelectorRow">
+                                <input
+                                  value={orgEnvSshHostAlias}
+                                  onChange={(event) => {
+                                    markOrgEnvFormDirty();
+                                    setOrgEnvSshHostAlias(event.target.value);
+                                    setOrgIdentitySelectedSshHost("");
+                                  }}
+                                  placeholder="github_gok"
+                                />
+                                {sshConfigHosts.length > 0 ? (
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    onClick={() => {
+                                      setOrgIdentitySshInputMode("selector");
+                                      const match = sshConfigHosts.find(
+                                        (entry) =>
+                                          entry.hostAlias ===
+                                          orgEnvSshHostAlias.trim(),
+                                      );
+                                      if (match) {
+                                        setOrgIdentitySelectedSshHost(
+                                          match.hostAlias,
+                                        );
+                                      }
+                                    }}
+                                  >
+                                    Usar seletor SSH
+                                  </Button>
+                                ) : null}
+                              </div>
+                            )}
+                            {sshConfigHosts.length === 0 &&
+                            !sshConfigHostsLoading ? (
+                              <span className="muted fieldHint">
+                                Nenhum host encontrado em{" "}
+                                <code>~/.ssh/config</code>. Use comentarios{" "}
+                                <code># GitHub gok</code> acima de cada bloco{" "}
+                                <code>Host</code> para rotular o seletor.
+                              </span>
+                            ) : (
+                              <span className="muted fieldHint">
+                                Host do <code>~/.ssh/config</code> usado no
+                                remoto (ex.{" "}
+                                <code>git@github_gok:org/repo.git</code>). O
+                                provider host acima continua sendo o{" "}
+                                <code>HostName</code> (ex.{" "}
+                                <code>github.com</code>
+                                ).
+                              </span>
+                            )}
+                          </label>
+                          <label>
+                            Git user.name
+                            <input
+                              value={orgEnvGitUserName}
+                              onChange={(event) => {
+                                markOrgEnvFormDirty();
+                                setOrgEnvGitUserName(event.target.value);
+                              }}
+                            />
+                          </label>
+                          <label>
+                            Git user.email
+                            <input
+                              value={orgEnvGitUserEmail}
+                              onChange={(event) => {
+                                markOrgEnvFormDirty();
+                                setOrgEnvGitUserEmail(event.target.value);
+                              }}
+                            />
+                          </label>
+                          <label>
+                            Padrao de branch
+                            <input
+                              value={orgEnvBranchPattern}
+                              onChange={(event) => {
+                                markOrgEnvFormDirty();
+                                setOrgEnvBranchPattern(event.target.value);
+                              }}
+                              placeholder="feature/*"
+                            />
+                          </label>
+                          <label>
+                            Convencao de PR
+                            <input
+                              value={orgEnvPrConvention}
+                              onChange={(event) => {
+                                markOrgEnvFormDirty();
+                                setOrgEnvPrConvention(event.target.value);
+                              }}
+                            />
+                          </label>
+                          <label>
+                            Convencao de commit
+                            <input
+                              value={orgEnvCommitConvention}
+                              onChange={(event) => {
+                                markOrgEnvFormDirty();
+                                setOrgEnvCommitConvention(event.target.value);
+                              }}
+                            />
+                          </label>
+                        </div>
+
+                        <div className="sessionForm compactForm">
+                          <SectionTitle icon={Link2}>Links uteis</SectionTitle>
+                          {orgUsefulLinks.map((link, index) => (
+                            <div key={index} className="historyFilterRow">
+                              <label>
+                                Rotulo
+                                <input
+                                  value={link.label}
+                                  onChange={(event) => {
+                                    markOrgEnvFormDirty();
+                                    const next = [...orgUsefulLinks];
+                                    next[index] = {
+                                      ...next[index],
+                                      label: event.target.value,
+                                    };
+                                    setOrgUsefulLinks(next);
+                                  }}
+                                />
+                              </label>
+                              <label>
+                                URL
+                                <input
+                                  value={link.url}
+                                  onChange={(event) => {
+                                    markOrgEnvFormDirty();
+                                    const next = [...orgUsefulLinks];
+                                    next[index] = {
+                                      ...next[index],
+                                      url: event.target.value,
+                                    };
+                                    setOrgUsefulLinks(next);
+                                  }}
+                                />
+                              </label>
+                            </div>
+                          ))}
+                          <div className="actionRow">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              onClick={() => {
+                                markOrgEnvFormDirty();
+                                setOrgUsefulLinks((current) => [
+                                  ...current,
+                                  { label: "", url: "" },
+                                ]);
+                              }}
+                            >
+                              Adicionar link
+                            </Button>
+                            <Button
+                              type="button"
+                              onClick={() =>
+                                void handleSaveOrganizationEnvironment()
+                              }
+                              disabled={orgSetupBusy}
+                            >
+                              <Save className="h-4 w-4" aria-hidden />
+                              Salvar identidade
+                            </Button>
+                          </div>
+                        </div>
+
+                        <div className="orgRepoMapping">
+                          <p className="backlogSidebarTitle">
+                            Mapeamento por repositorio
+                          </p>
+                          <label>
+                            Repositorio
+                            <select
+                              value={orgIdentityRepoId ?? ""}
+                              onChange={(event) => {
+                                setOrgIdentityRepoId(
+                                  event.target.value || null,
+                                );
+                                setOrgIdentityGuardrail(null);
+                                setOrgIdentityResult(null);
+                              }}
+                            >
+                              <option value="">Selecione</option>
+                              {orgSetupRepositories.map((repository) => (
+                                <option
+                                  key={repository.id}
+                                  value={repository.id}
+                                >
+                                  {repository.name}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          {orgIdentityRemoteFixPreview ? (
+                            <StatusAlert
+                              status="warning"
+                              title="Remoto SSH divergente do perfil"
+                            >
+                              O <code>origin</code> usa{" "}
+                              <code>
+                                {parseSshRemoteHostAlias(
+                                  orgIdentityRemoteUrl ?? "",
+                                ) ?? "?"}
+                              </code>
+                              , mas o perfil espera{" "}
+                              <code>{orgIdentitySshAlias}</code>. Ao corrigir:{" "}
+                              <code>{orgIdentityRemoteFixPreview}</code>
+                            </StatusAlert>
+                          ) : null}
+                          <div className="actionRow">
+                            <Button
+                              type="button"
+                              onClick={() =>
+                                void handleApplyFullRepositoryContext()
+                              }
+                              disabled={
+                                orgIdentityBusy ||
+                                !orgIdentityRepoId ||
+                                !orgIdentitySshAlias
+                              }
+                            >
+                              <ArrowRightLeft className="h-4 w-4" aria-hidden />
+                              Aplicar contexto completo
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              onClick={() => void handleApplyOrgIdentity()}
+                              disabled={orgIdentityBusy || !orgIdentityRepoId}
+                            >
+                              Aplicar identidade
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              onClick={() => void handleFixRepositoryRemote()}
+                              disabled={
+                                orgIdentityBusy ||
+                                !orgIdentityRepoId ||
+                                !orgIdentityRemoteFixPreview
+                              }
+                            >
+                              <GitBranch className="h-4 w-4" aria-hidden />
+                              Corrigir remoto
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              onClick={() => void handleValidateOrgIdentity()}
+                              disabled={orgIdentityBusy || !orgIdentityRepoId}
+                            >
+                              Validar contexto
+                            </Button>
+                          </div>
+                          {orgIdentityResult ? (
+                            <p className="resultText">{orgIdentityResult}</p>
+                          ) : null}
+                          {orgIdentityGuardrail?.validation?.checks.map(
+                            (check) => (
+                              <StatusAlert
+                                key={check.key}
+                                status={
+                                  check.status === "ok" ? "ok" : "warning"
+                                }
+                                title={check.message}
+                              >
+                                {formatValidationCheckDetail(check)}
+                              </StatusAlert>
+                            ),
+                          )}
+                        </div>
+                      </div>
+                    ) : null}
+
+                    {orgDetailTab === "integrations" ? (
+                      <div className="orgDetailSection orgIntegrationsPanel">
+                        <div className="orgIdentityInfoCard">
+                          <SectionTitle icon={Info}>
+                            Integracoes desta empresa
+                          </SectionTitle>
+                          <p className="muted">
+                            Configurando integracoes para{" "}
+                            <strong>{orgSetupOrganization?.name}</strong>. Cada
+                            empresa tem conexoes Jira e ClickUp independentes —
+                            trocar de empresa nao compartilha tokens nem sync
+                            entre elas.
+                          </p>
+                          <ul className="orgIdentityInfoList">
+                            <li>
+                              Tarefas atribuidas a voce sao espelhadas no
+                              backlog WCP como <strong>importadas</strong>{" "}
+                              (somente leitura na v1).
+                            </li>
+                            <li>
+                              Prazos usam o campo <code>due</code> da ferramenta
+                              externa (<code>scheduled_for</code> no WCP).
+                            </li>
+                            <li>
+                              O sync nao altera repositorios Git nem identidade.
+                            </li>
+                            <li>
+                              No sync, o status externo prevalece sobre edicoes
+                              locais em tarefas importadas.
+                            </li>
+                          </ul>
+                        </div>
+
+                        {integrationMessage ? (
+                          <p className="resultText">{integrationMessage}</p>
                         ) : null}
 
-                        {newProjectInspection?.isGitRepo ? (
-                          <StatusAlert
-                            status="ok"
-                            title="Repositorio Git detectado"
-                          >
-                            {newProjectInspection.remoteUrl ??
-                              "Sem remote.origin.url configurado"}
-                            {newProjectInspection.defaultBranch
-                              ? ` · branch ${newProjectInspection.defaultBranch}`
-                              : ""}
-                          </StatusAlert>
-                        ) : null}
+                        <div className="sessionForm compactForm orgIntegrationCard">
+                          <SectionTitle icon={Plug}>Jira Cloud</SectionTitle>
+                          {getPmConnection("jira") ? (
+                            <Badge variant="success">
+                              Conectado nesta empresa
+                            </Badge>
+                          ) : (
+                            <Badge variant="outline">
+                              Nao conectado nesta empresa
+                            </Badge>
+                          )}
+                          <p className="muted">
+                            Email + API token da Atlassian.{" "}
+                            <a
+                              href="https://support.atlassian.com/atlassian-account/docs/manage-api-tokens-for-your-atlassian-account/"
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              Como gerar token
+                            </a>
+                          </p>
+                          {getPmConnection("jira")?.lastSyncAt ? (
+                            <p className="muted">
+                              Ultima sync:{" "}
+                              {formatDateTime(
+                                getPmConnection("jira")?.lastSyncAt,
+                              )}
+                              {getPmConnection("jira")?.lastSyncError
+                                ? ` · Erro: ${getPmConnection("jira")?.lastSyncError}`
+                                : ""}
+                            </p>
+                          ) : null}
+                          <label>
+                            Site URL
+                            <input
+                              value={jiraSiteUrl}
+                              onChange={(event) =>
+                                setJiraSiteUrl(event.target.value)
+                              }
+                              placeholder="https://sua-empresa.atlassian.net"
+                            />
+                          </label>
+                          <label>
+                            Email
+                            <input
+                              type="email"
+                              value={jiraEmail}
+                              onChange={(event) =>
+                                setJiraEmail(event.target.value)
+                              }
+                              placeholder="voce@empresa.com"
+                            />
+                          </label>
+                          <label>
+                            API token
+                            <input
+                              type="password"
+                              value={jiraApiToken}
+                              onChange={(event) =>
+                                setJiraApiToken(event.target.value)
+                              }
+                              placeholder={
+                                getPmConnection("jira")?.hasCredentials
+                                  ? "Deixe vazio no teste para usar salvo"
+                                  : "Cole o token"
+                              }
+                            />
+                          </label>
+                          <div className="actionRow">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              disabled={integrationBusy}
+                              onClick={() => void handleTestJiraConnection()}
+                            >
+                              Testar
+                            </Button>
+                            <Button
+                              type="button"
+                              disabled={integrationBusy}
+                              onClick={() => void handleSaveJiraConnection()}
+                            >
+                              Salvar
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              disabled={
+                                integrationBusy || !getPmConnection("jira")
+                              }
+                              onClick={() => void handleSyncPmTasks("jira")}
+                            >
+                              Sincronizar Jira
+                            </Button>
+                          </div>
+                        </div>
 
-                        {newProjectError ? (
-                          <p className="errorText">{newProjectError}</p>
-                        ) : null}
+                        <div className="sessionForm compactForm orgIntegrationCard">
+                          <SectionTitle icon={Plug}>ClickUp</SectionTitle>
+                          {getPmConnection("clickup") ? (
+                            <Badge variant="success">
+                              Conectado nesta empresa
+                            </Badge>
+                          ) : (
+                            <Badge variant="outline">
+                              Nao conectado nesta empresa
+                            </Badge>
+                          )}
+                          <p className="muted">
+                            Personal API token.{" "}
+                            <a
+                              href="https://clickup.com/api/developer-portal/authentication/"
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              Documentacao
+                            </a>
+                          </p>
+                          {getPmConnection("clickup")?.lastSyncAt ? (
+                            <p className="muted">
+                              Ultima sync:{" "}
+                              {formatDateTime(
+                                getPmConnection("clickup")?.lastSyncAt,
+                              )}
+                              {getPmConnection("clickup")?.lastSyncError
+                                ? ` · Erro: ${getPmConnection("clickup")?.lastSyncError}`
+                                : ""}
+                            </p>
+                          ) : null}
+                          <label>
+                            API token
+                            <input
+                              type="password"
+                              value={clickUpApiToken}
+                              onChange={(event) =>
+                                setClickUpApiToken(event.target.value)
+                              }
+                              placeholder={
+                                getPmConnection("clickup")?.hasCredentials
+                                  ? "Deixe vazio no teste para usar salvo"
+                                  : "pk_..."
+                              }
+                            />
+                          </label>
+                          {clickUpTeams.length > 0 ? (
+                            <label>
+                              Workspace (team)
+                              <select
+                                value={clickUpTeamId}
+                                onChange={(event) =>
+                                  setClickUpTeamId(event.target.value)
+                                }
+                              >
+                                <option value="">Selecione</option>
+                                {clickUpTeams.map((team) => (
+                                  <option key={team.id} value={team.id}>
+                                    {team.name}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                          ) : (
+                            <p className="muted">
+                              Clique em Testar para carregar os workspaces.
+                            </p>
+                          )}
+                          <div className="actionRow">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              disabled={integrationBusy}
+                              onClick={() => void handleTestClickUpConnection()}
+                            >
+                              Testar
+                            </Button>
+                            <Button
+                              type="button"
+                              disabled={integrationBusy}
+                              onClick={() => void handleSaveClickUpConnection()}
+                            >
+                              Salvar
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              disabled={
+                                integrationBusy || !getPmConnection("clickup")
+                              }
+                              onClick={() => void handleSyncPmTasks("clickup")}
+                            >
+                              Sincronizar ClickUp
+                            </Button>
+                          </div>
+                        </div>
 
                         <div className="actionRow">
                           <Button
                             type="button"
                             variant="outline"
-                            onClick={() => {
-                              setShowAddProjectForm(false);
-                              resetAddProjectForm();
-                            }}
-                          >
-                            Cancelar
-                          </Button>
-                          <Button
-                            type="button"
-                            onClick={() => void handleCreateProject()}
                             disabled={
-                              newProjectSaving ||
-                              !newProjectName.trim() ||
-                              !newProjectPath.trim() ||
-                              !newProjectInspection?.isGitRepo
+                              integrationBusy ||
+                              integrationConnections.length === 0
                             }
+                            onClick={() => void handleSyncPmTasks()}
                           >
-                            {newProjectSaving
-                              ? "Salvando..."
-                              : "Salvar repositorio"}
+                            Sincronizar todas as integracoes
                           </Button>
                         </div>
                       </div>
-                    )}
-                  </div>
+                    ) : null}
+                  </>
+                ) : (
+                  <StatusAlert status="warning" title="Nenhuma empresa">
+                    Crie a primeira empresa para organizar projetos e repos.
+                  </StatusAlert>
+                )}
+              </div>
+            </div>
+          </section>
+        ) : null}
 
-                  <p className="contextSectionLabel">
-                    Repositorios cadastrados
-                  </p>
-                  <div className="contextRepoPicker">
-                    {contextOrganizationRepos.length > 0 ? (
-                      contextOrganizationRepos.map((repository) => (
-                        <SelectableListItem
-                          key={repository.id}
-                          active={selectedRepoId === repository.id}
-                          onClick={() => handleSelectRepository(repository)}
-                          title={repository.name}
-                          subtitle={formatRepositoryContextLine(repository)}
+        {activeView === "repos" ? (
+          <section className="panel repoPanel">
+            <div className="repoHeader">
+              <div className="panelHeading">
+                <h2>Seus projetos</h2>
+                <p className="muted">
+                  Prepare o ambiente Git antes de comecar a codar.
+                </p>
+              </div>
+              <div className="resultStack">
+                {applyResult ? (
+                  <p className="resultText">{applyResult}</p>
+                ) : null}
+                {hookResult ? <p className="resultText">{hookResult}</p> : null}
+                {contextReady ? (
+                  <Badge variant="success">Pronto para trabalhar</Badge>
+                ) : null}
+              </div>
+            </div>
+
+            <section className="contextSwitchPanel">
+              <div className="panelHeading">
+                <h3 className="subheading">Troca de contexto</h3>
+                <p className="muted">
+                  Siga os passos para evitar erro de identidade ou host errado.
+                </p>
+              </div>
+
+              <ContextStepsBar
+                steps={CONTEXT_STEPS}
+                currentStep={contextStep}
+                completedSteps={completedContextSteps}
+                onStepClick={goToContextStep}
+              />
+
+              <p className="contextStepHint">
+                {CONTEXT_STEP_HINTS[contextStep]}
+              </p>
+
+              {contextChainLabel && contextStep >= 1 && contextStep <= 3 ? (
+                <div className="contextChainCard">
+                  <SectionTitle icon={GitBranch}>
+                    Cadeia de contexto
+                  </SectionTitle>
+                  {selectedOrganization ? (
+                    <div className="contextChainHeader">
+                      <OrganizationAvatar
+                        name={selectedOrganization.name}
+                        kind={selectedOrganization.kind}
+                        logoUrl={getOrganizationLogoUrl(
+                          selectedOrganization.id,
+                        )}
+                        size="sm"
+                      />
+                      <p className="dayBriefLine dayBriefLine-strong">
+                        {contextChainLabel}
+                      </p>
+                    </div>
+                  ) : (
+                    <p className="dayBriefLine dayBriefLine-strong">
+                      {contextChainLabel}
+                    </p>
+                  )}
+                </div>
+              ) : null}
+
+              <div className="contextStepContent">
+                {contextStep === 1 ? (
+                  <>
+                    <div className="historyFilterRow">
+                      <label>
+                        Empresa
+                        <select
+                          value={selectedOrganizationId}
+                          onChange={(event) =>
+                            handleOrganizationChange(event.target.value)
+                          }
                         >
-                          {repository.providerHost ?? "Servico nao informado"}
-                        </SelectableListItem>
-                      ))
-                    ) : (
-                      <StatusAlert status="warning" title="Sem repositorios">
-                        Nenhum repositorio cadastrado para esta empresa.
-                      </StatusAlert>
-                    )}
-                  </div>
-
-                  {selectedRepo ? (
-                    <div className="addProjectPanel">
-                      <div className="panelHeading">
-                        <h4 className="subheading">
-                          Pasta local do repositorio
-                        </h4>
-                        <p className="muted">
-                          Ajuste o caminho se o repositorio mudou de pasta ou
-                          ainda aponta para um seed de exemplo.
-                        </p>
-                      </div>
-
-                      {!showEditProjectPathForm ? (
-                        <>
-                          <div className="contextIdentityCard">
-                            <article>
-                              <span>Repositorio selecionado</span>
-                              <strong>{selectedRepo.name}</strong>
-                            </article>
-                            <article>
-                              <span>Pasta local</span>
-                              <strong>{selectedRepo.localPath ?? "-"}</strong>
-                            </article>
-                          </div>
-
-                          {selectedRepoPathIssue ? (
-                            <StatusAlert
-                              status="warning"
-                              title="Pasta indisponivel"
+                          <option value="all">Selecione uma empresa</option>
+                          {organizations.map((organization) => (
+                            <option
+                              key={organization.id}
+                              value={organization.id}
                             >
-                              {selectedRepoPathIssue}
-                            </StatusAlert>
-                          ) : null}
+                              {organization.name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
 
+                    {selectedOrganization ? (
+                      <div className="contextIdentityCard">
+                        <article className="contextIdentityHero">
+                          <OrganizationAvatar
+                            name={selectedOrganization.name}
+                            kind={selectedOrganization.kind}
+                            logoUrl={getOrganizationLogoUrl(
+                              selectedOrganization.id,
+                            )}
+                            size="md"
+                          />
+                          <div>
+                            <span>Empresa / ambiente</span>
+                            <strong>
+                              {selectedOrganization.name}
+                              {selectedOrganization.environmentName
+                                ? ` · ${selectedOrganization.environmentName}`
+                                : ""}
+                            </strong>
+                          </div>
+                        </article>
+                        <article>
+                          <span>Provider host</span>
+                          <strong>
+                            {selectedOrganization.providerHost ??
+                              "Nao configurado"}
+                          </strong>
+                        </article>
+                        <article>
+                          <span>Git user.name</span>
+                          <strong>
+                            {selectedOrganization.gitUserName ??
+                              "Nao configurado"}
+                          </strong>
+                        </article>
+                        <article>
+                          <span>Git user.email</span>
+                          <strong>
+                            {selectedOrganization.gitUserEmail ??
+                              "Nao configurado"}
+                          </strong>
+                        </article>
+                        <article>
+                          <span>Alias SSH</span>
+                          <strong>
+                            {selectedOrganization.sshHostAlias ??
+                              "Nao configurado"}
+                          </strong>
+                        </article>
+                        <article>
+                          <span>Padrao de branch</span>
+                          <strong>
+                            {selectedOrganization.branchPattern ??
+                              "Nao configurado"}
+                          </strong>
+                        </article>
+                      </div>
+                    ) : organizations.length === 0 ? (
+                      <StatusAlert
+                        status="warning"
+                        title="Nenhuma empresa cadastrada"
+                      >
+                        Cadastre uma empresa antes de preparar o contexto Git.
+                        <div className="actionRow">
                           <Button
                             type="button"
                             variant="outline"
-                            onClick={() => {
-                              resetEditProjectPathForm(selectedRepo);
-                              setShowEditProjectPathForm(true);
-                            }}
+                            onClick={() => switchActiveView("organizations")}
                           >
-                            Alterar pasta local
+                            Cadastrar empresa
                           </Button>
-                        </>
+                        </div>
+                      </StatusAlert>
+                    ) : (
+                      <StatusAlert status="warning" title="Escolha a empresa">
+                        Selecione acima qual contexto voce quer preparar.
+                      </StatusAlert>
+                    )}
+
+                    <div className="actionRow">
+                      <Button
+                        type="button"
+                        disabled={selectedOrganizationId === "all"}
+                        onClick={() => setContextStep(2)}
+                      >
+                        Continuar para repositorio
+                      </Button>
+                    </div>
+                  </>
+                ) : null}
+
+                {contextStep === 2 ? (
+                  <>
+                    <p className="muted contextOrgLine">
+                      <OrganizationAvatar
+                        name={selectedOrganization?.name ?? "Empresa"}
+                        kind={selectedOrganization?.kind}
+                        logoUrl={getOrganizationLogoUrl(
+                          selectedOrganization?.id,
+                        )}
+                        size="sm"
+                      />
+                      <span>
+                        Empresa:{" "}
+                        <strong>
+                          {selectedOrganization?.name ?? "Nao selecionada"}
+                        </strong>
+                      </span>
+                    </p>
+
+                    <div className="addProjectPanel">
+                      <div className="panelHeading">
+                        <h4 className="subheading">
+                          Adicionar repositorio local
+                        </h4>
+                        <p className="muted">
+                          Aponte para uma pasta Git real da sua maquina para
+                          conseguir conferir o ambiente.
+                        </p>
+                      </div>
+
+                      {!showAddProjectForm ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() => {
+                            resetAddProjectForm();
+                            setShowAddProjectForm(true);
+                          }}
+                        >
+                          Cadastrar pasta Git
+                        </Button>
                       ) : (
                         <div className="sessionForm compactForm">
                           <LocalPathField
-                            path={editProjectPath}
-                            inspecting={editProjectInspecting}
+                            path={newProjectPath}
+                            inspecting={newProjectInspecting}
                             onPathChange={(value) => {
-                              setEditProjectPath(value);
-                              setEditProjectInspection(null);
-                              setEditProjectError(null);
+                              setNewProjectPath(value);
+                              setNewProjectInspection(null);
+                              setNewProjectError(null);
                             }}
-                            onBrowse={() => void browseEditProjectPath()}
-                            onInspect={() => void inspectEditProjectPath()}
+                            onBrowse={() => void browseNewProjectPath()}
+                            onInspect={() => void inspectNewProjectPath()}
                           />
+                          <label>
+                            Projeto (opcional)
+                            <select
+                              value={newRepoProjectId}
+                              onChange={(event) =>
+                                setNewRepoProjectId(event.target.value)
+                              }
+                            >
+                              <option value="">Sem projeto</option>
+                              {projects
+                                .filter(
+                                  (project) =>
+                                    project.organizationId ===
+                                    selectedOrganizationId,
+                                )
+                                .map((project) => (
+                                  <option key={project.id} value={project.id}>
+                                    {project.name}
+                                  </option>
+                                ))}
+                            </select>
+                          </label>
+                          <label>
+                            Nome do repositorio
+                            <input
+                              value={newProjectName}
+                              onChange={(event) =>
+                                setNewProjectName(event.target.value)
+                              }
+                              placeholder="auth-api"
+                            />
+                          </label>
                           <label>
                             Remoto (opcional)
                             <input
-                              value={editProjectRemoteUrl}
+                              value={newProjectRemoteUrl}
                               onChange={(event) =>
-                                setEditProjectRemoteUrl(event.target.value)
+                                setNewProjectRemoteUrl(event.target.value)
                               }
                               placeholder="git@host:org/repo.git"
                             />
                           </label>
 
-                          {editProjectInspection?.isGitRepo ? (
+                          {newProjectIdentityWarning ? (
+                            <StatusAlert
+                              status="warning"
+                              title="Identidade local diferente"
+                            >
+                              {newProjectIdentityWarning}
+                            </StatusAlert>
+                          ) : null}
+
+                          {newProjectInspection?.isGitRepo ? (
                             <StatusAlert
                               status="ok"
                               title="Repositorio Git detectado"
                             >
-                              {editProjectInspection.remoteUrl ??
+                              {newProjectInspection.remoteUrl ??
                                 "Sem remote.origin.url configurado"}
-                              {editProjectInspection.defaultBranch
-                                ? ` · branch ${editProjectInspection.defaultBranch}`
+                              {newProjectInspection.defaultBranch
+                                ? ` · branch ${newProjectInspection.defaultBranch}`
                                 : ""}
                             </StatusAlert>
                           ) : null}
 
-                          {editProjectError ? (
-                            <p className="errorText">{editProjectError}</p>
+                          {newProjectError ? (
+                            <p className="errorText">{newProjectError}</p>
                           ) : null}
 
                           <div className="actionRow">
@@ -7117,738 +7201,934 @@ export function App() {
                               type="button"
                               variant="outline"
                               onClick={() => {
-                                setShowEditProjectPathForm(false);
-                                resetEditProjectPathForm(selectedRepo);
+                                setShowAddProjectForm(false);
+                                resetAddProjectForm();
                               }}
                             >
                               Cancelar
                             </Button>
                             <Button
                               type="button"
-                              onClick={() => void handleUpdateProjectPath()}
+                              onClick={() => void handleCreateProject()}
                               disabled={
-                                editProjectSaving ||
-                                !editProjectPath.trim() ||
-                                !editProjectInspection?.isGitRepo
+                                newProjectSaving ||
+                                !newProjectName.trim() ||
+                                !newProjectPath.trim() ||
+                                !newProjectInspection?.isGitRepo
                               }
                             >
-                              {editProjectSaving
+                              {newProjectSaving
                                 ? "Salvando..."
-                                : "Salvar pasta local"}
+                                : "Salvar repositorio"}
                             </Button>
                           </div>
                         </div>
                       )}
                     </div>
-                  ) : null}
 
-                  <div className="actionRow">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => setContextStep(1)}
-                    >
-                      Voltar
-                    </Button>
-                    <Button
-                      type="button"
-                      disabled={!selectedRepoId}
-                      onClick={() => setContextStep(3)}
-                    >
-                      Continuar para conferir
-                    </Button>
-                  </div>
-                </>
-              ) : null}
-
-              {contextStep === 3 ? (
-                <>
-                  <p className="muted">
-                    Conferindo:{" "}
-                    <strong>{selectedRepo?.name ?? "Nenhum projeto"}</strong>
-                  </p>
-
-                  {selectedRepoPathIssue ? (
-                    <StatusAlert
-                      status="warning"
-                      title="Pasta local indisponivel"
-                    >
-                      {selectedRepoPathIssue}
-                      {" — "}
-                      Volte ao passo Projeto e cadastre uma pasta Git real, ou
-                      escolha outro repositorio.
-                    </StatusAlert>
-                  ) : null}
-
-                  {repoError ? <p className="errorText">{repoError}</p> : null}
-
-                  <ul className="contextChecklist">
-                    {contextSwitchChecks.map((check) => (
-                      <li
-                        key={check.id}
-                        className={`contextCheckItem contextCheckItem-${check.status}`}
-                      >
-                        <strong>{check.label}</strong>
-                        <span>{check.message}</span>
-                      </li>
-                    ))}
-                  </ul>
-                  <div className="actionRow">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => setContextStep(2)}
-                    >
-                      Voltar
-                    </Button>
-                    <Button
-                      type="button"
-                      onClick={() => void refreshRepositoryContext(true)}
-                      disabled={
-                        refreshingRepo ||
-                        !selectedRepo?.localPath ||
-                        Boolean(selectedRepoPathIssue)
-                      }
-                    >
-                      {refreshingRepo ? "Conferindo..." : "Conferir ambiente"}
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      disabled={!selectedValidation}
-                      onClick={() => setContextStep(4)}
-                    >
-                      Continuar
-                    </Button>
-                  </div>
-                </>
-              ) : null}
-
-              {contextStep === 4 ? (
-                <>
-                  {selectedValidation ? (
-                    <StatusAlert
-                      status={selectedValidation.status}
-                      title={formatValidationStatus(selectedValidation.status)}
-                    >
-                      Resultado da conferencia local
-                    </StatusAlert>
-                  ) : (
-                    <StatusAlert status="warning" title="Conferencia pendente">
-                      Volte ao passo anterior e confira o ambiente.
-                    </StatusAlert>
-                  )}
-                  <ul className="contextChecklist">
-                    {selectedValidation?.checks.map((check) => (
-                      <li
-                        key={check.key}
-                        className={`contextCheckItem contextCheckItem-${check.status}`}
-                      >
-                        <strong>{humanizeCheckKey(check.key)}</strong>
-                        <span>{formatValidationCheckDetail(check)}</span>
-                      </li>
-                    )) ?? null}
-                  </ul>
-                  <div className="actionRow">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => setContextStep(3)}
-                    >
-                      Voltar
-                    </Button>
-                    <Button
-                      type="button"
-                      onClick={() => void handleApplyIdentity()}
-                      disabled={
-                        applyingIdentity ||
-                        preparingContext ||
-                        !selectedRepo?.localPath
-                      }
-                    >
-                      {applyingIdentity
-                        ? "Aplicando..."
-                        : "Ajustar identidade Git"}
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      disabled={!selectedValidation}
-                      onClick={() => setContextStep(5)}
-                    >
-                      Continuar
-                    </Button>
-                  </div>
-                </>
-              ) : null}
-
-              {contextStep === 5 ? (
-                <>
-                  <StatusAlert
-                    status={hookStatus?.managedByApp ? "ok" : "warning"}
-                    title="Protecao antes do push"
-                  >
-                    {!hookStatus?.installed
-                      ? "Nenhum hook pre-push instalado ainda."
-                      : hookStatus.managedByApp
-                        ? "Hook pre-push ativo e gerenciado pelo app."
-                        : "Ha um hook pre-push manual neste projeto."}
-                  </StatusAlert>
-                  <div className="actionRow">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => setContextStep(4)}
-                    >
-                      Voltar
-                    </Button>
-                    <Button
-                      type="button"
-                      onClick={() => void handleInstallPrePushHook()}
-                      disabled={
-                        installingHook ||
-                        preparingContext ||
-                        !selectedRepo?.localPath ||
-                        hookStatus?.managedByApp
-                      }
-                    >
-                      {installingHook
-                        ? "Instalando..."
-                        : hookStatus?.managedByApp
-                          ? "Protecao ativa"
-                          : "Instalar protecao"}
-                    </Button>
-                    {hookStatus?.managedByApp ? (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={() => void handleRemovePrePushHook()}
-                        disabled={removingHook || preparingContext}
-                      >
-                        {removingHook ? "Removendo..." : "Remover protecao"}
-                      </Button>
-                    ) : null}
-                    <Button
-                      type="button"
-                      variant="outline"
-                      disabled={!hookStatus?.managedByApp}
-                      onClick={() => setContextStep(6)}
-                    >
-                      Continuar
-                    </Button>
-                  </div>
-                </>
-              ) : null}
-
-              {contextStep === 6 ? (
-                <>
-                  <StatusAlert status="ok" title="Contexto preparado">
-                    <span className="contextReadySummary">
-                      {selectedOrganization ? (
-                        <OrganizationAvatar
-                          name={selectedOrganization.name}
-                          kind={selectedOrganization.kind}
-                          logoUrl={getOrganizationLogoUrl(
-                            selectedOrganization.id,
-                          )}
-                          size="sm"
-                        />
-                      ) : selectedRepo?.organizationId ? (
-                        <OrganizationAvatar
-                          name={
-                            findOrganizationById(selectedRepo.organizationId)
-                              ?.name ??
-                            selectedRepo.organizationName ??
-                            "Empresa"
-                          }
-                          kind={
-                            findOrganizationById(selectedRepo.organizationId)
-                              ?.kind
-                          }
-                          logoUrl={getOrganizationLogoUrl(
-                            selectedRepo.organizationId,
-                          )}
-                          size="sm"
-                        />
-                      ) : null}
-                      <span>
-                        {selectedOrganization?.name ??
-                          selectedRepo?.organizationName}
-                        {" · "}
-                        {selectedRepo?.name ?? "projeto"}
-                      </span>
-                    </span>
-                  </StatusAlert>
-                  <ul className="contextChecklist">
-                    {contextSwitchChecks.map((check) => (
-                      <li
-                        key={`ready-${check.id}`}
-                        className={`contextCheckItem contextCheckItem-${check.status}`}
-                      >
-                        <strong>{check.label}</strong>
-                        <span>{check.message}</span>
-                      </li>
-                    ))}
-                  </ul>
-                  <div className="actionRow">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => setContextStep(5)}
-                    >
-                      Revisar protecao
-                    </Button>
-                    <Button
-                      type="button"
-                      onClick={() => void handlePrepareContext()}
-                      disabled={
-                        preparingContext ||
-                        applyingIdentity ||
-                        installingHook ||
-                        refreshingRepo ||
-                        !selectedRepo?.localPath
-                      }
-                    >
-                      {preparingContext
-                        ? "Preparando..."
-                        : "Repreparar contexto"}
-                    </Button>
-                  </div>
-                </>
-              ) : null}
-            </div>
-          </section>
-
-          <div className="repoLayout">
-            {contextStep >= 2 ? (
-              <>
-                <aside className="repoList">
-                  <SectionTitle icon={FolderGit2}>
-                    Repositorios por empresa
-                  </SectionTitle>
-                  {groupedRepositories.map((group) => (
-                    <div key={group.organizationName} className="repoGroup">
-                      <p className="repoGroupTitle">
-                        <OrganizationAvatar
-                          name={group.organizationName}
-                          kind={
-                            findOrganizationById(group.organizationId)?.kind
-                          }
-                          logoUrl={getOrganizationLogoUrl(group.organizationId)}
-                          size="sm"
-                        />
-                        <span>{group.organizationName}</span>
-                      </p>
-                      {group.repositories.map((repository) => (
-                        <SelectableListItem
-                          key={repository.id}
-                          active={
-                            selectedRepoId === repository.id && contextStep >= 2
-                          }
-                          onClick={() => handleSelectRepository(repository)}
-                          title={repository.name}
-                          subtitle={formatRepositoryContextLine(repository)}
-                        >
-                          {repository.providerHost ?? "Servico nao informado"}
-                        </SelectableListItem>
-                      ))}
-                    </div>
-                  ))}
-                </aside>
-
-                <div className="repoDetails">
-                  {selectedRepo ? (
-                    <>
-                      <div className="repoMeta">
-                        <article>
-                          <span>Remoto</span>
-                          <strong>{selectedRepo.remoteUrl ?? "-"}</strong>
-                        </article>
-                        <article>
-                          <span>Pasta local</span>
-                          <strong>{selectedRepo.localPath ?? "-"}</strong>
-                        </article>
-                        <article>
-                          <span>Branch padrao</span>
-                          <strong>{selectedRepo.defaultBranch ?? "-"}</strong>
-                        </article>
-                      </div>
-
-                      {contextStep >= 6 ? (
-                        <>
-                          {repoLoading ? (
-                            <StatusAlert status="warning" title="Conferindo...">
-                              Validando o ambiente deste projeto.
-                            </StatusAlert>
-                          ) : selectedValidation ? (
-                            <>
-                              <StatusAlert
-                                status={selectedValidation.status}
-                                title={formatValidationStatus(
-                                  selectedValidation.status,
-                                )}
-                              >
-                                Conferencia da identidade local
-                              </StatusAlert>
-                              <ul className="checkList">
-                                {selectedValidation.checks.map((check) => (
-                                  <li key={check.key}>
-                                    <strong>
-                                      {humanizeCheckKey(check.key)}
-                                    </strong>
-                                    <span>
-                                      {formatValidationCheckDetail(check)}
-                                    </span>
-                                  </li>
-                                ))}
-                              </ul>
-                            </>
-                          ) : (
-                            <StatusAlert
-                              status="warning"
-                              title="Ainda sem conferencia"
-                            >
-                              Este projeto ainda nao tem dados Git suficientes
-                              para validar.
-                            </StatusAlert>
-                          )}
-
-                          <StatusAlert
-                            status={
-                              hookStatus?.installed && hookStatus.managedByApp
-                                ? "ok"
-                                : "warning"
-                            }
-                            title="Protecao antes do push"
+                    <p className="contextSectionLabel">
+                      Repositorios cadastrados
+                    </p>
+                    <div className="contextRepoPicker">
+                      {contextOrganizationRepos.length > 0 ? (
+                        contextOrganizationRepos.map((repository) => (
+                          <SelectableListItem
+                            key={repository.id}
+                            active={selectedRepoId === repository.id}
+                            onClick={() => handleSelectRepository(repository)}
+                            title={repository.name}
+                            subtitle={formatRepositoryContextLine(repository)}
                           >
-                            <div className="grid gap-2">
-                              <span>
-                                {!hookStatus?.installed
-                                  ? "Nenhum hook pre-push instalado ainda."
-                                  : hookStatus.managedByApp
-                                    ? "Hook pre-push ativo e gerenciado pelo app."
-                                    : "Ha um hook pre-push manual neste projeto."}
-                              </span>
-                              {hookStatus?.installed &&
-                              !hookStatus.managedByApp ? (
-                                <code className="text-xs">
-                                  O app nao altera hooks que voce instalou
-                                  manualmente.
-                                </code>
-                              ) : null}
-                              {hookStatus?.hookPath ? (
-                                <code className="text-xs">
-                                  {hookStatus.hookPath}
-                                </code>
-                              ) : null}
+                            {repository.providerHost ?? "Servico nao informado"}
+                          </SelectableListItem>
+                        ))
+                      ) : (
+                        <StatusAlert status="warning" title="Sem repositorios">
+                          Nenhum repositorio cadastrado para esta empresa.
+                        </StatusAlert>
+                      )}
+                    </div>
+
+                    {selectedRepo ? (
+                      <div className="addProjectPanel">
+                        <div className="panelHeading">
+                          <h4 className="subheading">
+                            Pasta local do repositorio
+                          </h4>
+                          <p className="muted">
+                            Ajuste o caminho se o repositorio mudou de pasta ou
+                            ainda aponta para um seed de exemplo.
+                          </p>
+                        </div>
+
+                        {!showEditProjectPathForm ? (
+                          <>
+                            <div className="contextIdentityCard">
+                              <article>
+                                <span>Repositorio selecionado</span>
+                                <strong>{selectedRepo.name}</strong>
+                              </article>
+                              <article>
+                                <span>Pasta local</span>
+                                <strong>{selectedRepo.localPath ?? "-"}</strong>
+                              </article>
                             </div>
-                          </StatusAlert>
 
-                          <div className="actionRow">
-                            <Button
-                              type="button"
-                              variant="outline"
-                              onClick={() => refreshRepositoryContext(true)}
-                              disabled={
-                                refreshingRepo || !selectedRepo.localPath
-                              }
-                            >
-                              {refreshingRepo
-                                ? "Conferindo..."
-                                : "Conferir ambiente"}
-                            </Button>
-                            <Button
-                              type="button"
-                              variant="outline"
-                              onClick={handleInstallPrePushHook}
-                              disabled={
-                                installingHook ||
-                                removingHook ||
-                                refreshingRepo ||
-                                !selectedRepo.localPath
-                              }
-                            >
-                              {installingHook
-                                ? "Instalando..."
-                                : hookStatus?.managedByApp
-                                  ? "Reparar protecao"
-                                  : "Instalar protecao"}
-                            </Button>
-                            {hookStatus?.managedByApp ? (
-                              <Button
-                                type="button"
-                                variant="outline"
-                                onClick={handleRemovePrePushHook}
-                                disabled={
-                                  removingHook ||
-                                  installingHook ||
-                                  refreshingRepo ||
-                                  !selectedRepo.localPath
-                                }
+                            {selectedRepoPathIssue ? (
+                              <StatusAlert
+                                status="warning"
+                                title="Pasta indisponivel"
                               >
-                                {removingHook
-                                  ? "Removendo..."
-                                  : "Remover protecao"}
-                              </Button>
+                                {selectedRepoPathIssue}
+                              </StatusAlert>
                             ) : null}
+
                             <Button
                               type="button"
-                              onClick={handleApplyIdentity}
-                              disabled={
-                                applyingIdentity ||
-                                removingHook ||
-                                refreshingRepo ||
-                                !selectedRepo.localPath
-                              }
+                              variant="outline"
+                              onClick={() => {
+                                resetEditProjectPathForm(selectedRepo);
+                                setShowEditProjectPathForm(true);
+                              }}
                             >
-                              {applyingIdentity
-                                ? "Aplicando..."
-                                : "Ajustar identidade Git"}
+                              Alterar pasta local
                             </Button>
-                          </div>
-
-                          <h3 className="subheading">Checklist detalhado</h3>
-                          <ul className="contextChecklist">
-                            {contextSwitchChecks.map((check) => (
-                              <li
-                                key={`detail-${check.id}`}
-                                className={`contextCheckItem contextCheckItem-${check.status}`}
-                              >
-                                <strong>{check.label}</strong>
-                                <span>{check.message}</span>
-                              </li>
-                            ))}
-                          </ul>
-
-                          <h3 className="subheading">Anotacoes do projeto</h3>
+                          </>
+                        ) : (
                           <div className="sessionForm compactForm">
+                            <LocalPathField
+                              path={editProjectPath}
+                              inspecting={editProjectInspecting}
+                              onPathChange={(value) => {
+                                setEditProjectPath(value);
+                                setEditProjectInspection(null);
+                                setEditProjectError(null);
+                              }}
+                              onBrowse={() => void browseEditProjectPath()}
+                              onInspect={() => void inspectEditProjectPath()}
+                            />
                             <label>
-                              Titulo
+                              Remoto (opcional)
                               <input
-                                value={repoNoteTitle}
+                                value={editProjectRemoteUrl}
                                 onChange={(event) =>
-                                  setRepoNoteTitle(event.target.value)
+                                  setEditProjectRemoteUrl(event.target.value)
                                 }
-                                placeholder="Padrao, comando util ou problema recorrente"
+                                placeholder="git@host:org/repo.git"
                               />
                             </label>
-                            <label>
-                              Conteudo
-                              <Textarea
-                                value={repoNoteContent}
-                                onChange={(event) =>
-                                  setRepoNoteContent(event.target.value)
-                                }
-                                placeholder="Ex.: rodar migrate antes do worker subir em dev"
-                              />
-                            </label>
+
+                            {editProjectInspection?.isGitRepo ? (
+                              <StatusAlert
+                                status="ok"
+                                title="Repositorio Git detectado"
+                              >
+                                {editProjectInspection.remoteUrl ??
+                                  "Sem remote.origin.url configurado"}
+                                {editProjectInspection.defaultBranch
+                                  ? ` · branch ${editProjectInspection.defaultBranch}`
+                                  : ""}
+                              </StatusAlert>
+                            ) : null}
+
+                            {editProjectError ? (
+                              <p className="errorText">{editProjectError}</p>
+                            ) : null}
+
                             <div className="actionRow">
                               <Button
                                 type="button"
                                 variant="outline"
-                                onClick={handleSaveRepositoryNote}
-                                disabled={contextBusy}
+                                onClick={() => {
+                                  setShowEditProjectPathForm(false);
+                                  resetEditProjectPathForm(selectedRepo);
+                                }}
                               >
-                                Salvar anotacao
+                                Cancelar
+                              </Button>
+                              <Button
+                                type="button"
+                                onClick={() => void handleUpdateProjectPath()}
+                                disabled={
+                                  editProjectSaving ||
+                                  !editProjectPath.trim() ||
+                                  !editProjectInspection?.isGitRepo
+                                }
+                              >
+                                {editProjectSaving
+                                  ? "Salvando..."
+                                  : "Salvar pasta local"}
                               </Button>
                             </div>
                           </div>
+                        )}
+                      </div>
+                    ) : null}
 
-                          <ul className="historyList">
-                            {(repoMemory?.notes ?? []).map((note) => (
-                              <li key={note.id}>
-                                <div>
-                                  <strong>{note.title}</strong>
-                                  <span>{note.noteType}</span>
-                                  <code>{note.content}</code>
-                                </div>
-                              </li>
-                            ))}
-                          </ul>
+                    <div className="actionRow">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => setContextStep(1)}
+                      >
+                        Voltar
+                      </Button>
+                      <Button
+                        type="button"
+                        disabled={!selectedRepoId}
+                        onClick={() => setContextStep(3)}
+                      >
+                        Continuar para conferir
+                      </Button>
+                    </div>
+                  </>
+                ) : null}
 
-                          {repoError ? (
-                            <p className="errorText">{repoError}</p>
-                          ) : null}
-                        </>
-                      ) : (
-                        <StatusAlert
-                          status="warning"
-                          title="Detalhes completos no passo Pronto"
+                {contextStep === 3 ? (
+                  <>
+                    <p className="muted">
+                      Conferindo:{" "}
+                      <strong>{selectedRepo?.name ?? "Nenhum projeto"}</strong>
+                    </p>
+
+                    {selectedRepoPathIssue ? (
+                      <StatusAlert
+                        status="warning"
+                        title="Pasta local indisponivel"
+                      >
+                        {selectedRepoPathIssue}
+                        {" — "}
+                        Volte ao passo Projeto e cadastre uma pasta Git real, ou
+                        escolha outro repositorio.
+                      </StatusAlert>
+                    ) : null}
+
+                    {repoError ? (
+                      <p className="errorText">{repoError}</p>
+                    ) : null}
+
+                    <ul className="contextChecklist">
+                      {contextSwitchChecks.map((check) => (
+                        <li
+                          key={check.id}
+                          className={`contextCheckItem contextCheckItem-${check.status}`}
                         >
-                          Siga os passos acima para conferir e preparar o
-                          ambiente.
-                        </StatusAlert>
-                      )}
-                    </>
-                  ) : (
-                    <StatusAlert status="warning" title="Escolha um projeto">
-                      Selecione um repositorio no passo Projeto ou na lista ao
-                      lado.
+                          <strong>{check.label}</strong>
+                          <span>{check.message}</span>
+                        </li>
+                      ))}
+                    </ul>
+                    <div className="actionRow">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => setContextStep(2)}
+                      >
+                        Voltar
+                      </Button>
+                      <Button
+                        type="button"
+                        onClick={() => void refreshRepositoryContext(true)}
+                        disabled={
+                          refreshingRepo ||
+                          !selectedRepo?.localPath ||
+                          Boolean(selectedRepoPathIssue)
+                        }
+                      >
+                        {refreshingRepo ? "Conferindo..." : "Conferir ambiente"}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        disabled={!selectedValidation}
+                        onClick={() => setContextStep(4)}
+                      >
+                        Continuar
+                      </Button>
+                    </div>
+                  </>
+                ) : null}
+
+                {contextStep === 4 ? (
+                  <>
+                    {selectedValidation ? (
+                      <StatusAlert
+                        status={selectedValidation.status}
+                        title={formatValidationStatus(
+                          selectedValidation.status,
+                        )}
+                      >
+                        Resultado da conferencia local
+                      </StatusAlert>
+                    ) : (
+                      <StatusAlert
+                        status="warning"
+                        title="Conferencia pendente"
+                      >
+                        Volte ao passo anterior e confira o ambiente.
+                      </StatusAlert>
+                    )}
+                    <ul className="contextChecklist">
+                      {selectedValidation?.checks.map((check) => (
+                        <li
+                          key={check.key}
+                          className={`contextCheckItem contextCheckItem-${check.status}`}
+                        >
+                          <strong>{humanizeCheckKey(check.key)}</strong>
+                          <span>{formatValidationCheckDetail(check)}</span>
+                        </li>
+                      )) ?? null}
+                    </ul>
+                    <div className="actionRow">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => setContextStep(3)}
+                      >
+                        Voltar
+                      </Button>
+                      <Button
+                        type="button"
+                        onClick={() => void handleApplyIdentity()}
+                        disabled={
+                          applyingIdentity ||
+                          preparingContext ||
+                          !selectedRepo?.localPath
+                        }
+                      >
+                        {applyingIdentity
+                          ? "Aplicando..."
+                          : "Ajustar identidade Git"}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        disabled={!selectedValidation}
+                        onClick={() => setContextStep(5)}
+                      >
+                        Continuar
+                      </Button>
+                    </div>
+                  </>
+                ) : null}
+
+                {contextStep === 5 ? (
+                  <>
+                    <StatusAlert
+                      status={hookStatus?.managedByApp ? "ok" : "warning"}
+                      title="Protecao antes do push"
+                    >
+                      {!hookStatus?.installed
+                        ? "Nenhum hook pre-push instalado ainda."
+                        : hookStatus.managedByApp
+                          ? "Hook pre-push ativo e gerenciado pelo app."
+                          : "Ha um hook pre-push manual neste projeto."}
                     </StatusAlert>
-                  )}
-                </div>
-              </>
-            ) : (
-              <div className="contextStepPlaceholder">
-                <strong>Passo 1 — Empresa</strong>
-                <span>
-                  Escolha a empresa acima para ver os projetos e detalhes do
-                  ambiente.
-                </span>
+                    <div className="actionRow">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => setContextStep(4)}
+                      >
+                        Voltar
+                      </Button>
+                      <Button
+                        type="button"
+                        onClick={() => void handleInstallPrePushHook()}
+                        disabled={
+                          installingHook ||
+                          preparingContext ||
+                          !selectedRepo?.localPath ||
+                          hookStatus?.managedByApp
+                        }
+                      >
+                        {installingHook
+                          ? "Instalando..."
+                          : hookStatus?.managedByApp
+                            ? "Protecao ativa"
+                            : "Instalar protecao"}
+                      </Button>
+                      {hookStatus?.managedByApp ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() => void handleRemovePrePushHook()}
+                          disabled={removingHook || preparingContext}
+                        >
+                          {removingHook ? "Removendo..." : "Remover protecao"}
+                        </Button>
+                      ) : null}
+                      <Button
+                        type="button"
+                        variant="outline"
+                        disabled={!hookStatus?.managedByApp}
+                        onClick={() => setContextStep(6)}
+                      >
+                        Continuar
+                      </Button>
+                    </div>
+                  </>
+                ) : null}
+
+                {contextStep === 6 ? (
+                  <>
+                    <StatusAlert status="ok" title="Contexto preparado">
+                      <span className="contextReadySummary">
+                        {selectedOrganization ? (
+                          <OrganizationAvatar
+                            name={selectedOrganization.name}
+                            kind={selectedOrganization.kind}
+                            logoUrl={getOrganizationLogoUrl(
+                              selectedOrganization.id,
+                            )}
+                            size="sm"
+                          />
+                        ) : selectedRepo?.organizationId ? (
+                          <OrganizationAvatar
+                            name={
+                              findOrganizationById(selectedRepo.organizationId)
+                                ?.name ??
+                              selectedRepo.organizationName ??
+                              "Empresa"
+                            }
+                            kind={
+                              findOrganizationById(selectedRepo.organizationId)
+                                ?.kind
+                            }
+                            logoUrl={getOrganizationLogoUrl(
+                              selectedRepo.organizationId,
+                            )}
+                            size="sm"
+                          />
+                        ) : null}
+                        <span>
+                          {selectedOrganization?.name ??
+                            selectedRepo?.organizationName}
+                          {" · "}
+                          {selectedRepo?.name ?? "projeto"}
+                        </span>
+                      </span>
+                    </StatusAlert>
+                    <ul className="contextChecklist">
+                      {contextSwitchChecks.map((check) => (
+                        <li
+                          key={`ready-${check.id}`}
+                          className={`contextCheckItem contextCheckItem-${check.status}`}
+                        >
+                          <strong>{check.label}</strong>
+                          <span>{check.message}</span>
+                        </li>
+                      ))}
+                    </ul>
+                    <div className="actionRow">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => setContextStep(5)}
+                      >
+                        Revisar protecao
+                      </Button>
+                      <Button
+                        type="button"
+                        onClick={() => void handlePrepareContext()}
+                        disabled={
+                          preparingContext ||
+                          applyingIdentity ||
+                          installingHook ||
+                          refreshingRepo ||
+                          !selectedRepo?.localPath
+                        }
+                      >
+                        {preparingContext
+                          ? "Preparando..."
+                          : "Repreparar contexto"}
+                      </Button>
+                    </div>
+                  </>
+                ) : null}
               </div>
-            )}
-          </div>
-        </section>
-      ) : null}
+            </section>
 
-      {activeView === "history" ? (
-        <section className="panel historyPanel">
-          <div className="historyFilters">
-            <div className="historyFilterRow">
-              <SearchField
-                type="search"
-                placeholder="Filtrar por texto no historico..."
-                value={historyTextQuery}
-                onChange={(event) => setHistoryTextQuery(event.target.value)}
-                aria-label="Busca textual no historico"
-              />
-            </div>
-            <FilterTabs
-              value={historyKindFilter}
-              onValueChange={setHistoryKindFilter}
-              aria-label="Filtrar historico por tipo"
-              items={HISTORY_KIND_FILTERS.map((filter) => ({
-                id: filter.id,
-                label: `${filter.label} (${historyKindCounts[filter.id]})`,
-                icon: HISTORY_KIND_ICONS[filter.id],
-              }))}
-            />
-            <div className="historyFilterRow">
-              <label className="grid gap-2 text-sm text-muted-foreground">
-                <Label htmlFor="history-task-filter">Tarefa</Label>
-                <select
-                  id="history-task-filter"
-                  value={historyTaskFilter}
-                  onChange={(event) => setHistoryTaskFilter(event.target.value)}
-                >
-                  <option value="all">Todas</option>
-                  {historyTaskOptions.map(([id, title]) => (
-                    <option key={id} value={id}>
-                      {title}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="grid gap-2 text-sm text-muted-foreground">
-                <Label htmlFor="history-repo-filter">Projeto</Label>
-                <select
-                  id="history-repo-filter"
-                  value={historyRepoFilter}
-                  onChange={(event) => setHistoryRepoFilter(event.target.value)}
-                >
-                  <option value="all">Todos</option>
-                  {historyRepoOptions.map(([id, name]) => (
-                    <option key={id} value={id}>
-                      {name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="grid gap-2 text-sm text-muted-foreground">
-                <Label htmlFor="history-org-filter">Empresa</Label>
-                <select
-                  id="history-org-filter"
-                  value={historyOrgFilter}
-                  onChange={(event) => setHistoryOrgFilter(event.target.value)}
-                >
-                  <option value="all">Todas</option>
-                  {historyOrgOptions.map(([id, name]) => (
-                    <option key={id} value={id}>
-                      {name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-          </div>
-
-          {historyLoading ? (
-            <p className="historyEmpty">Carregando historico...</p>
-          ) : historySearchBusy ? (
-            <p className="historyEmpty">Buscando no historico...</p>
-          ) : historyError ? (
-            <p className="historyEmpty">{historyError}</p>
-          ) : historyEvents.length === 0 && !historyTextQuery.trim() ? (
-            <div className="historyEmpty">
-              <p>Nenhum evento registrado ainda.</p>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => setActiveView("backlog")}
-              >
-                Ir para tarefas
-              </Button>
-            </div>
-          ) : filteredHistoryEvents.length === 0 ? (
-            <p className="historyEmpty">
-              {historyUsesDeepSearch
-                ? `Nenhum resultado para "${historyTextQuery.trim()}".`
-                : "Nenhum evento com esses filtros."}
-            </p>
-          ) : (
-            <ul className="historyGroupedList">
-              {groupedHistoryEvents.map((group) => (
-                <li key={group.dayKey} className="historyDayGroup">
-                  <h3 className="historyDayHeading">{group.label}</h3>
-                  <ul className="historyEventList">
-                    {group.events.map((event) => (
-                      <li key={`${event.kind}-${event.id}`}>
-                        <HistoryEventButton
-                          kind={event.kind}
-                          onClick={() => handleContextEventClick(event)}
-                          meta={`${normalizeContextEventLabel(event.kind)} · ${formatDateTime(event.createdAt)}`}
-                          title={event.title}
-                          detail={
-                            event.detail
-                              ? truncateSearchDetail(event.detail)
-                              : undefined
-                          }
-                          context={
-                            formatHistoryEventMeta(event) ? (
-                              <span className="historyEventContext">
-                                {event.organizationId ? (
-                                  <OrganizationAvatar
-                                    name={
-                                      findOrganizationById(event.organizationId)
-                                        ?.name ??
-                                      event.organizationName ??
-                                      "Empresa"
-                                    }
-                                    kind={
-                                      findOrganizationById(event.organizationId)
-                                        ?.kind
-                                    }
-                                    logoUrl={getOrganizationLogoUrl(
-                                      event.organizationId,
-                                    )}
-                                    size="sm"
-                                  />
-                                ) : null}
-                                <span>{formatHistoryEventMeta(event)}</span>
-                              </span>
-                            ) : undefined
-                          }
-                        />
-                      </li>
+            <div className="repoLayout">
+              {contextStep >= 2 ? (
+                <>
+                  <aside className="repoList">
+                    <SectionTitle icon={FolderGit2}>
+                      Repositorios por empresa
+                    </SectionTitle>
+                    {groupedRepositories.map((group) => (
+                      <div key={group.organizationName} className="repoGroup">
+                        <p className="repoGroupTitle">
+                          <OrganizationAvatar
+                            name={group.organizationName}
+                            kind={
+                              findOrganizationById(group.organizationId)?.kind
+                            }
+                            logoUrl={getOrganizationLogoUrl(
+                              group.organizationId,
+                            )}
+                            size="sm"
+                          />
+                          <span>{group.organizationName}</span>
+                        </p>
+                        {group.repositories.map((repository) => (
+                          <SelectableListItem
+                            key={repository.id}
+                            active={
+                              selectedRepoId === repository.id &&
+                              contextStep >= 2
+                            }
+                            onClick={() => handleSelectRepository(repository)}
+                            title={repository.name}
+                            subtitle={formatRepositoryContextLine(repository)}
+                          >
+                            {repository.providerHost ?? "Servico nao informado"}
+                          </SelectableListItem>
+                        ))}
+                      </div>
                     ))}
-                  </ul>
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
-      ) : null}
-    </main>
+                  </aside>
+
+                  <div className="repoDetails">
+                    {selectedRepo ? (
+                      <>
+                        <div className="repoDetailHeader">
+                          <div className="panelHeading">
+                            <h3 className="subheading">{selectedRepo.name}</h3>
+                            <p className="muted">
+                              {selectedRepo.organizationName ?? "Sem empresa"}
+                              {selectedRepo.projectName
+                                ? ` · ${selectedRepo.projectName}`
+                                : ""}
+                            </p>
+                          </div>
+                          <Button
+                            type="button"
+                            variant="destructive"
+                            size="sm"
+                            onClick={() =>
+                              void handleDeleteRepository(selectedRepo)
+                            }
+                            disabled={orgSetupBusy || preparingContext}
+                          >
+                            Excluir repositorio
+                          </Button>
+                        </div>
+
+                        <div className="repoMeta">
+                          <article>
+                            <span>Remoto</span>
+                            <strong>{selectedRepo.remoteUrl ?? "-"}</strong>
+                          </article>
+                          <article>
+                            <span>Pasta local</span>
+                            <strong>{selectedRepo.localPath ?? "-"}</strong>
+                          </article>
+                          <article>
+                            <span>Branch padrao</span>
+                            <strong>{selectedRepo.defaultBranch ?? "-"}</strong>
+                          </article>
+                        </div>
+
+                        {contextStep >= 6 ? (
+                          <>
+                            {repoLoading ? (
+                              <StatusAlert
+                                status="warning"
+                                title="Conferindo..."
+                              >
+                                Validando o ambiente deste projeto.
+                              </StatusAlert>
+                            ) : selectedValidation ? (
+                              <>
+                                <StatusAlert
+                                  status={selectedValidation.status}
+                                  title={formatValidationStatus(
+                                    selectedValidation.status,
+                                  )}
+                                >
+                                  Conferencia da identidade local
+                                </StatusAlert>
+                                <ul className="checkList">
+                                  {selectedValidation.checks.map((check) => (
+                                    <li key={check.key}>
+                                      <strong>
+                                        {humanizeCheckKey(check.key)}
+                                      </strong>
+                                      <span>
+                                        {formatValidationCheckDetail(check)}
+                                      </span>
+                                    </li>
+                                  ))}
+                                </ul>
+                              </>
+                            ) : (
+                              <StatusAlert
+                                status="warning"
+                                title="Ainda sem conferencia"
+                              >
+                                Este projeto ainda nao tem dados Git suficientes
+                                para validar.
+                              </StatusAlert>
+                            )}
+
+                            <StatusAlert
+                              status={
+                                hookStatus?.installed && hookStatus.managedByApp
+                                  ? "ok"
+                                  : "warning"
+                              }
+                              title="Protecao antes do push"
+                            >
+                              <div className="grid gap-2">
+                                <span>
+                                  {!hookStatus?.installed
+                                    ? "Nenhum hook pre-push instalado ainda."
+                                    : hookStatus.managedByApp
+                                      ? "Hook pre-push ativo e gerenciado pelo app."
+                                      : "Ha um hook pre-push manual neste projeto."}
+                                </span>
+                                {hookStatus?.installed &&
+                                !hookStatus.managedByApp ? (
+                                  <code className="text-xs">
+                                    O app nao altera hooks que voce instalou
+                                    manualmente.
+                                  </code>
+                                ) : null}
+                                {hookStatus?.hookPath ? (
+                                  <code className="text-xs">
+                                    {hookStatus.hookPath}
+                                  </code>
+                                ) : null}
+                              </div>
+                            </StatusAlert>
+
+                            <div className="actionRow">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                onClick={() => refreshRepositoryContext(true)}
+                                disabled={
+                                  refreshingRepo || !selectedRepo.localPath
+                                }
+                              >
+                                {refreshingRepo
+                                  ? "Conferindo..."
+                                  : "Conferir ambiente"}
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                onClick={handleInstallPrePushHook}
+                                disabled={
+                                  installingHook ||
+                                  removingHook ||
+                                  refreshingRepo ||
+                                  !selectedRepo.localPath
+                                }
+                              >
+                                {installingHook
+                                  ? "Instalando..."
+                                  : hookStatus?.managedByApp
+                                    ? "Reparar protecao"
+                                    : "Instalar protecao"}
+                              </Button>
+                              {hookStatus?.managedByApp ? (
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  onClick={handleRemovePrePushHook}
+                                  disabled={
+                                    removingHook ||
+                                    installingHook ||
+                                    refreshingRepo ||
+                                    !selectedRepo.localPath
+                                  }
+                                >
+                                  {removingHook
+                                    ? "Removendo..."
+                                    : "Remover protecao"}
+                                </Button>
+                              ) : null}
+                              <Button
+                                type="button"
+                                onClick={handleApplyIdentity}
+                                disabled={
+                                  applyingIdentity ||
+                                  removingHook ||
+                                  refreshingRepo ||
+                                  !selectedRepo.localPath
+                                }
+                              >
+                                {applyingIdentity
+                                  ? "Aplicando..."
+                                  : "Ajustar identidade Git"}
+                              </Button>
+                            </div>
+
+                            <h3 className="subheading">Checklist detalhado</h3>
+                            <ul className="contextChecklist">
+                              {contextSwitchChecks.map((check) => (
+                                <li
+                                  key={`detail-${check.id}`}
+                                  className={`contextCheckItem contextCheckItem-${check.status}`}
+                                >
+                                  <strong>{check.label}</strong>
+                                  <span>{check.message}</span>
+                                </li>
+                              ))}
+                            </ul>
+
+                            <h3 className="subheading">Anotacoes do projeto</h3>
+                            <div className="sessionForm compactForm">
+                              <label>
+                                Titulo
+                                <input
+                                  value={repoNoteTitle}
+                                  onChange={(event) =>
+                                    setRepoNoteTitle(event.target.value)
+                                  }
+                                  placeholder="Padrao, comando util ou problema recorrente"
+                                />
+                              </label>
+                              <label>
+                                Conteudo
+                                <Textarea
+                                  value={repoNoteContent}
+                                  onChange={(event) =>
+                                    setRepoNoteContent(event.target.value)
+                                  }
+                                  placeholder="Ex.: rodar migrate antes do worker subir em dev"
+                                />
+                              </label>
+                              <div className="actionRow">
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  onClick={handleSaveRepositoryNote}
+                                  disabled={contextBusy}
+                                >
+                                  Salvar anotacao
+                                </Button>
+                              </div>
+                            </div>
+
+                            <ul className="historyList">
+                              {(repoMemory?.notes ?? []).map((note) => (
+                                <li key={note.id}>
+                                  <div>
+                                    <strong>{note.title}</strong>
+                                    <span>{note.noteType}</span>
+                                    <code>{note.content}</code>
+                                  </div>
+                                </li>
+                              ))}
+                            </ul>
+
+                            {repoError ? (
+                              <p className="errorText">{repoError}</p>
+                            ) : null}
+                          </>
+                        ) : (
+                          <StatusAlert
+                            status="warning"
+                            title="Detalhes completos no passo Pronto"
+                          >
+                            Siga os passos acima para conferir e preparar o
+                            ambiente.
+                          </StatusAlert>
+                        )}
+                      </>
+                    ) : (
+                      <StatusAlert status="warning" title="Escolha um projeto">
+                        Selecione um repositorio no passo Projeto ou na lista ao
+                        lado.
+                      </StatusAlert>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <div className="contextStepPlaceholder">
+                  <strong>Passo 1 — Empresa</strong>
+                  <span>
+                    Escolha a empresa acima para ver os projetos e detalhes do
+                    ambiente.
+                  </span>
+                </div>
+              )}
+            </div>
+          </section>
+        ) : null}
+
+        {activeView === "history" ? (
+          <section className="panel historyPanel">
+            <div className="historyFilters">
+              <div className="historyFilterRow">
+                <SearchField
+                  type="search"
+                  placeholder="Filtrar por texto no historico..."
+                  value={historyTextQuery}
+                  onChange={(event) => setHistoryTextQuery(event.target.value)}
+                  aria-label="Busca textual no historico"
+                />
+              </div>
+              <FilterTabs
+                value={historyKindFilter}
+                onValueChange={setHistoryKindFilter}
+                aria-label="Filtrar historico por tipo"
+                items={HISTORY_KIND_FILTERS.map((filter) => ({
+                  id: filter.id,
+                  label: `${filter.label} (${historyKindCounts[filter.id]})`,
+                  icon: HISTORY_KIND_ICONS[filter.id],
+                }))}
+              />
+              <div className="historyFilterRow">
+                <label className="grid gap-2 text-sm text-muted-foreground">
+                  <Label htmlFor="history-task-filter">Tarefa</Label>
+                  <select
+                    id="history-task-filter"
+                    value={historyTaskFilter}
+                    onChange={(event) =>
+                      setHistoryTaskFilter(event.target.value)
+                    }
+                  >
+                    <option value="all">Todas</option>
+                    {historyTaskOptions.map(([id, title]) => (
+                      <option key={id} value={id}>
+                        {title}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="grid gap-2 text-sm text-muted-foreground">
+                  <Label htmlFor="history-repo-filter">Projeto</Label>
+                  <select
+                    id="history-repo-filter"
+                    value={historyRepoFilter}
+                    onChange={(event) =>
+                      setHistoryRepoFilter(event.target.value)
+                    }
+                  >
+                    <option value="all">Todos</option>
+                    {historyRepoOptions.map(([id, name]) => (
+                      <option key={id} value={id}>
+                        {name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="grid gap-2 text-sm text-muted-foreground">
+                  <Label htmlFor="history-org-filter">Empresa</Label>
+                  <select
+                    id="history-org-filter"
+                    value={historyOrgFilter}
+                    onChange={(event) =>
+                      setHistoryOrgFilter(event.target.value)
+                    }
+                  >
+                    <option value="all">Todas</option>
+                    {historyOrgOptions.map(([id, name]) => (
+                      <option key={id} value={id}>
+                        {name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+            </div>
+
+            {historyLoading ? (
+              <p className="historyEmpty">Carregando historico...</p>
+            ) : historySearchBusy ? (
+              <p className="historyEmpty">Buscando no historico...</p>
+            ) : historyError ? (
+              <p className="historyEmpty">{historyError}</p>
+            ) : historyEvents.length === 0 && !historyTextQuery.trim() ? (
+              <div className="historyEmpty">
+                <p>Nenhum evento registrado ainda.</p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setActiveView("backlog")}
+                >
+                  Ir para tarefas
+                </Button>
+              </div>
+            ) : filteredHistoryEvents.length === 0 ? (
+              <p className="historyEmpty">
+                {historyUsesDeepSearch
+                  ? `Nenhum resultado para "${historyTextQuery.trim()}".`
+                  : "Nenhum evento com esses filtros."}
+              </p>
+            ) : (
+              <ul className="historyGroupedList">
+                {groupedHistoryEvents.map((group) => (
+                  <li key={group.dayKey} className="historyDayGroup">
+                    <h3 className="historyDayHeading">{group.label}</h3>
+                    <ul className="historyEventList">
+                      {group.events.map((event) => (
+                        <li key={`${event.kind}-${event.id}`}>
+                          <HistoryEventButton
+                            kind={event.kind}
+                            onClick={() => handleContextEventClick(event)}
+                            meta={`${normalizeContextEventLabel(event.kind)} · ${formatDateTime(event.createdAt)}`}
+                            title={event.title}
+                            detail={
+                              event.detail
+                                ? truncateSearchDetail(event.detail)
+                                : undefined
+                            }
+                            context={
+                              formatHistoryEventMeta(event) ? (
+                                <span className="historyEventContext">
+                                  {event.organizationId ? (
+                                    <OrganizationAvatar
+                                      name={
+                                        findOrganizationById(
+                                          event.organizationId,
+                                        )?.name ??
+                                        event.organizationName ??
+                                        "Empresa"
+                                      }
+                                      kind={
+                                        findOrganizationById(
+                                          event.organizationId,
+                                        )?.kind
+                                      }
+                                      logoUrl={getOrganizationLogoUrl(
+                                        event.organizationId,
+                                      )}
+                                      size="sm"
+                                    />
+                                  ) : null}
+                                  <span>{formatHistoryEventMeta(event)}</span>
+                                </span>
+                              ) : undefined
+                            }
+                          />
+                        </li>
+                      ))}
+                    </ul>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        ) : null}
+      </main>
+
+      <ConfirmDialog
+        open={confirmDialog !== null}
+        title={confirmDialog?.title ?? ""}
+        description={confirmDialog?.description ?? ""}
+        confirmLabel={confirmDialog?.confirmLabel}
+        destructive={confirmDialog?.destructive}
+        busy={confirmDialogBusy}
+        onConfirm={() => void handleConfirmDialog()}
+        onCancel={closeConfirmDialog}
+        cancelLabel="Cancelar"
+      />
+    </>
   );
 }
 
