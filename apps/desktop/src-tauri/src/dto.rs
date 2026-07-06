@@ -39,6 +39,11 @@ pub struct WorkItemDto {
     pub blocked_reason: Option<String>,
     pub resume_summary: Option<String>,
     pub source_type: String,
+    pub scheduled_for: Option<String>,
+    pub external_provider: Option<String>,
+    pub external_id: Option<String>,
+    pub external_key: Option<String>,
+    pub external_url: Option<String>,
     pub updated_at: String,
 }
 
@@ -466,4 +471,89 @@ pub struct GitSnapshot {
     pub git_user_email: Option<String>,
     pub ssh_host_alias: Option<String>,
     pub branch_name: Option<String>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IntegrationConnectionDto {
+    pub id: String,
+    pub workspace_id: String,
+    pub organization_id: String,
+    pub provider: String,
+    pub display_name: Option<String>,
+    pub config_json: String,
+    pub credential_key: String,
+    pub has_credentials: bool,
+    pub is_active: bool,
+    pub sync_enabled: bool,
+    pub last_sync_at: Option<String>,
+    pub last_sync_error: Option<String>,
+    pub sync_filter_json: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveIntegrationConnectionResultDto {
+    pub connection: IntegrationConnectionDto,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PmConnectionInfoDto {
+    pub provider: String,
+    pub account_label: String,
+    pub account_id: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PmConnectionTestResultDto {
+    pub ok: bool,
+    pub info: Option<PmConnectionInfoDto>,
+    pub error: Option<String>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClickUpTeamDto {
+    pub id: String,
+    pub name: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClickUpTeamListDto {
+    pub teams: Vec<ClickUpTeamDto>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PmSyncResultDto {
+    pub created: usize,
+    pub updated: usize,
+    pub unchanged: usize,
+    pub errors: Vec<String>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeadlineAlertItemDto {
+    pub work_item_id: String,
+    pub title: String,
+    pub scheduled_for: String,
+    pub external_provider: Option<String>,
+    pub external_url: Option<String>,
+    pub kind: String,
+    pub hours_until_due: f64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeadlineAlertsDto {
+    pub overdue: Vec<DeadlineAlertItemDto>,
+    pub due_today: Vec<DeadlineAlertItemDto>,
+    pub due_soon: Vec<DeadlineAlertItemDto>,
+    pub items: Vec<DeadlineAlertItemDto>,
 }

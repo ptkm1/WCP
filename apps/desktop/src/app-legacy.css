@@ -879,6 +879,37 @@
   line-height: 1.5;
 }
 
+.orgIntegrationsPanel {
+  display: grid;
+  gap: 20px;
+}
+
+.orgIntegrationCard {
+  margin-top: 0;
+}
+
+.integrationDeadlines {
+  margin-top: 20px;
+}
+
+.integrationDeadlineList li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.externalTaskLink {
+  color: #93c5fd;
+  font-size: 0.85rem;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.externalTaskLink:hover {
+  text-decoration: underline;
+}
+
 .orgIdentitySshSelectorRow {
   display: flex;
   gap: 8px;

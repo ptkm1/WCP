@@ -1,7 +1,6 @@
 import {
   Ban,
   Building2,
-  Check,
   CheckCircle2,
   CheckSquare,
   FolderGit2,
@@ -16,9 +15,10 @@ import {
   Paperclip,
   PenLine,
   PlayCircle,
+  Plug,
   Plus,
-  ScanSearch,
   Save,
+  ScanSearch,
   Search,
   Shield,
   Sparkles,
@@ -56,6 +56,7 @@ export const ORG_TAB_ICONS: Record<string, LucideIcon> = {
   projects: Layers,
   repos: GitBranch,
   identity: KeyRound,
+  integrations: Plug,
 };
 
 export const HISTORY_KIND_ICONS: Record<string, LucideIcon> = {

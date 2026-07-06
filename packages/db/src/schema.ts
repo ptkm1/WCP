@@ -162,8 +162,43 @@ export const workItems = sqliteTable("work_items", {
   blockedReason: text("blocked_reason"),
   resumeSummary: text("resume_summary"),
   sourceType: text("source_type").notNull(),
+  externalProvider: text("external_provider"),
+  externalId: text("external_id"),
+  externalKey: text("external_key"),
+  externalUrl: text("external_url"),
   ...timestamps,
 });
+
+export const integrationConnections = sqliteTable(
+  "integration_connections",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id),
+    provider: text("provider").notNull(),
+    displayName: text("display_name"),
+    configJson: text("config_json").notNull(),
+    credentialKey: text("credential_key").notNull(),
+    isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
+    syncEnabled: integer("sync_enabled", { mode: "boolean" })
+      .notNull()
+      .default(true),
+    lastSyncAt: text("last_sync_at"),
+    lastSyncError: text("last_sync_error"),
+    syncFilterJson: text("sync_filter_json"),
+    ...timestamps,
+  },
+  (table) => ({
+    orgProviderUnique: uniqueIndex("integration_connections_org_provider").on(
+      table.organizationId,
+      table.provider,
+    ),
+  }),
+);
 
 export const workItemRepositories = sqliteTable(
   "work_item_repositories",

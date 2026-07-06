@@ -18,7 +18,8 @@ export type SyncEntityName =
   | "entityLink"
   | "dailyPlan"
   | "dailyPlanItem"
-  | "activityEvent";
+  | "activityEvent"
+  | "integrationConnection";
 
 export const ENTITY_SYNC_PROFILE: Record<SyncEntityName, SyncScope> = {
   workspace: "syncable",
@@ -37,6 +38,7 @@ export const ENTITY_SYNC_PROFILE: Record<SyncEntityName, SyncScope> = {
   dailyPlan: "syncable",
   dailyPlanItem: "syncable",
   activityEvent: "appendOnly",
+  integrationConnection: "syncable",
 };
 
 export const DEVICE_LOCAL_FIELDS = [

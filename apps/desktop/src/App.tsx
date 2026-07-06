@@ -43,6 +43,7 @@ import {
   Info,
   Link2,
   ListTodo,
+  Plug,
   Plus,
   Save,
   ScanSearch,
@@ -67,6 +68,11 @@ interface WorkItemDto {
   projectId?: string | null;
   primaryRepositoryId?: string | null;
   sourceType?: string;
+  scheduledFor?: string | null;
+  externalProvider?: string | null;
+  externalId?: string | null;
+  externalKey?: string | null;
+  externalUrl?: string | null;
   updatedAt?: string;
 }
 
@@ -244,6 +250,49 @@ interface ApplyFullContextResultDto {
   previousRemoteUrl?: string | null;
   updatedRemoteUrl?: string | null;
   validation?: IdentityValidationDto | null;
+}
+
+interface IntegrationConnectionDto {
+  id: string;
+  organizationId: string;
+  provider: string;
+  displayName?: string | null;
+  configJson: string;
+  hasCredentials: boolean;
+  isActive: boolean;
+  syncEnabled: boolean;
+  lastSyncAt?: string | null;
+  lastSyncError?: string | null;
+  syncFilterJson?: string | null;
+}
+
+interface ClickUpTeamDto {
+  id: string;
+  name: string;
+}
+
+interface PmSyncResultDto {
+  created: number;
+  updated: number;
+  unchanged: number;
+  errors: string[];
+}
+
+interface DeadlineAlertItemDto {
+  workItemId: string;
+  title: string;
+  scheduledFor: string;
+  externalProvider?: string | null;
+  externalUrl?: string | null;
+  kind: string;
+  hoursUntilDue: number;
+}
+
+interface DeadlineAlertsDto {
+  overdue: DeadlineAlertItemDto[];
+  dueToday: DeadlineAlertItemDto[];
+  dueSoon: DeadlineAlertItemDto[];
+  items: DeadlineAlertItemDto[];
 }
 
 interface CreateRepositoryResultDto {
@@ -443,7 +492,12 @@ interface ContextEventDto {
 
 type DesktopView = "today" | "backlog" | "organizations" | "repos" | "history";
 
-type OrgDetailTab = "company" | "projects" | "repos" | "identity";
+type OrgDetailTab =
+  | "company"
+  | "projects"
+  | "repos"
+  | "identity"
+  | "integrations";
 
 type TimelineFilter = "all" | TimelineEntryDto["kind"];
 
@@ -511,6 +565,7 @@ const ORG_DETAIL_TABS: { id: OrgDetailTab; label: string }[] = [
   { id: "projects", label: "Projetos" },
   { id: "repos", label: "Repos" },
   { id: "identity", label: "Identidade Git" },
+  { id: "integrations", label: "Integracoes" },
 ];
 
 const HISTORY_KIND_FILTERS: { id: HistoryKindFilter; label: string }[] = [
@@ -1038,6 +1093,21 @@ export function App() {
   const [sshConfigHostsLoading, setSshConfigHostsLoading] = useState(false);
   const [orgIdentitySelectedSshHost, setOrgIdentitySelectedSshHost] =
     useState("");
+  const [integrationConnections, setIntegrationConnections] = useState<
+    IntegrationConnectionDto[]
+  >([]);
+  const [integrationBusy, setIntegrationBusy] = useState(false);
+  const [integrationMessage, setIntegrationMessage] = useState<string | null>(
+    null,
+  );
+  const [jiraSiteUrl, setJiraSiteUrl] = useState("");
+  const [jiraEmail, setJiraEmail] = useState("");
+  const [jiraApiToken, setJiraApiToken] = useState("");
+  const [clickUpApiToken, setClickUpApiToken] = useState("");
+  const [clickUpTeamId, setClickUpTeamId] = useState("");
+  const [clickUpTeams, setClickUpTeams] = useState<ClickUpTeamDto[]>([]);
+  const [deadlineAlerts, setDeadlineAlerts] =
+    useState<DeadlineAlertsDto | null>(null);
   const [newRepoProjectId, setNewRepoProjectId] = useState("");
   const [resolvedWorkContext, setResolvedWorkContext] =
     useState<ResolvedWorkContextDto | null>(null);
@@ -1213,6 +1283,137 @@ export function App() {
 
     setOrgIdentitySshInputMode("manual");
   }, [orgEnvSshHostAlias, orgEnvFormDirty, sshConfigHosts]);
+
+  useEffect(() => {
+    if (!orgSetupSelectedId) {
+      setIntegrationConnections([]);
+      clearIntegrationFormState();
+      setIntegrationMessage(null);
+      return;
+    }
+
+    clearIntegrationFormState();
+    setIntegrationMessage(null);
+
+    let cancelled = false;
+    invoke<IntegrationConnectionDto[]>("list_integration_connections", {
+      organizationId: orgSetupSelectedId,
+    })
+      .then((connections) => {
+        if (cancelled) {
+          return;
+        }
+        applyIntegrationConnectionsToForm(connections, {
+          loadClickUpTeams: orgDetailTab === "integrations",
+        });
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setIntegrationConnections([]);
+          clearIntegrationFormState();
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [orgSetupSelectedId, orgDetailTab]);
+
+  useEffect(() => {
+    if (activeView !== "today") {
+      return;
+    }
+
+    let cancelled = false;
+
+    invoke<DeadlineAlertsDto>("get_deadline_alerts")
+      .then((alerts) => {
+        if (!cancelled) {
+          setDeadlineAlerts(alerts);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setDeadlineAlerts(null);
+        }
+      });
+
+    void invoke<number>("notify_deadline_alerts").catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeView]);
+
+  useEffect(() => {
+    if (activeView !== "backlog" && activeView !== "today") {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      void (async () => {
+        for (const organization of organizations) {
+          try {
+            await invoke<PmSyncResultDto>(
+              "sync_organization_pm_tasks_command",
+              {
+                organizationId: organization.id,
+              },
+            );
+          } catch {
+            // sync silencioso em background
+          }
+        }
+        await refreshDashboard();
+        if (activeView === "today") {
+          try {
+            const alerts = await invoke<DeadlineAlertsDto>(
+              "get_deadline_alerts",
+            );
+            setDeadlineAlerts(alerts);
+            await invoke<number>("notify_deadline_alerts");
+          } catch {
+            // alertas opcionais
+          }
+        }
+      })();
+    }, 2000);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [activeView, organizations]);
+
+  useEffect(() => {
+    if (activeView !== "backlog" && activeView !== "today") {
+      return;
+    }
+
+    const intervalId = window.setInterval(
+      () => {
+        void (async () => {
+          for (const organization of organizations) {
+            try {
+              await invoke<PmSyncResultDto>(
+                "sync_organization_pm_tasks_command",
+                {
+                  organizationId: organization.id,
+                },
+              );
+            } catch {
+              // sync periodico silencioso
+            }
+          }
+          await refreshDashboard();
+        })();
+      },
+      30 * 60 * 1000,
+    );
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [activeView, organizations]);
 
   useEffect(() => {
     if (activeView !== "repos" && activeView !== "organizations") {
@@ -2933,6 +3134,310 @@ export function App() {
     }
   }
 
+  function getPmConnection(provider: "jira" | "clickup") {
+    return (
+      integrationConnections.find(
+        (connection) => connection.provider === provider,
+      ) ?? null
+    );
+  }
+
+  function clearIntegrationFormState() {
+    setJiraSiteUrl("");
+    setJiraEmail("");
+    setJiraApiToken("");
+    setClickUpApiToken("");
+    setClickUpTeamId("");
+    setClickUpTeams([]);
+  }
+
+  function applyIntegrationConnectionsToForm(
+    connections: IntegrationConnectionDto[],
+    options?: { loadClickUpTeams?: boolean },
+  ) {
+    setIntegrationConnections(connections);
+    clearIntegrationFormState();
+
+    const jira = connections.find((entry) => entry.provider === "jira");
+    const clickup = connections.find((entry) => entry.provider === "clickup");
+
+    if (jira?.configJson) {
+      try {
+        const config = JSON.parse(jira.configJson) as {
+          siteUrl?: string;
+          email?: string;
+        };
+        setJiraSiteUrl(config.siteUrl ?? "");
+        setJiraEmail(config.email ?? "");
+      } catch {
+        // formulario permanece limpo
+      }
+    }
+
+    if (clickup?.configJson) {
+      try {
+        const config = JSON.parse(clickup.configJson) as { teamId?: string };
+        setClickUpTeamId(config.teamId ?? "");
+      } catch {
+        // formulario permanece limpo
+      }
+    }
+
+    if (
+      options?.loadClickUpTeams &&
+      clickup?.hasCredentials &&
+      orgSetupSelectedId
+    ) {
+      void invoke<{ teams: ClickUpTeamDto[] }>("list_clickup_teams", {
+        apiToken: null,
+        connectionId: clickup.id,
+      })
+        .then((response) => {
+          setClickUpTeams(response.teams);
+        })
+        .catch(() => {
+          setClickUpTeams([]);
+        });
+    }
+  }
+
+  async function reloadIntegrationConnections() {
+    if (!orgSetupSelectedId) {
+      setIntegrationConnections([]);
+      clearIntegrationFormState();
+      return;
+    }
+
+    const connections = await invoke<IntegrationConnectionDto[]>(
+      "list_integration_connections",
+      { organizationId: orgSetupSelectedId },
+    );
+    applyIntegrationConnectionsToForm(connections, {
+      loadClickUpTeams: orgDetailTab === "integrations",
+    });
+  }
+
+  function buildJiraCredentialsJson(): string {
+    return JSON.stringify({
+      email: jiraEmail.trim(),
+      apiToken: jiraApiToken.trim(),
+    });
+  }
+
+  function buildClickUpCredentialsJson(): string {
+    return JSON.stringify({
+      apiToken: clickUpApiToken.trim(),
+    });
+  }
+
+  async function handleTestJiraConnection() {
+    if (!orgSetupSelectedId) {
+      return;
+    }
+
+    const connection = getPmConnection("jira");
+    if (!jiraApiToken.trim() && !connection?.hasCredentials) {
+      setIntegrationMessage("Informe o API token do Jira para testar.");
+      return;
+    }
+
+    try {
+      setIntegrationBusy(true);
+      setIntegrationMessage(null);
+      const result = await invoke<{
+        ok: boolean;
+        error?: string | null;
+        info?: { accountLabel?: string } | null;
+      }>("test_integration_connection", {
+        provider: "jira",
+        configJson: JSON.stringify({ siteUrl: jiraSiteUrl.trim() }),
+        credentialsJson: jiraApiToken.trim()
+          ? buildJiraCredentialsJson()
+          : "{}",
+        connectionId: connection?.id ?? null,
+      });
+
+      if (result.ok) {
+        setIntegrationMessage(
+          `Jira conectado${result.info?.accountLabel ? `: ${result.info.accountLabel}` : ""}.`,
+        );
+      } else {
+        setIntegrationMessage(result.error ?? "Falha ao testar Jira.");
+      }
+    } catch (testError) {
+      setIntegrationMessage(
+        extractErrorMessage(testError, "Falha ao testar Jira"),
+      );
+    } finally {
+      setIntegrationBusy(false);
+    }
+  }
+
+  async function handleSaveJiraConnection() {
+    if (!orgSetupSelectedId) {
+      return;
+    }
+
+    if (!jiraSiteUrl.trim() || !jiraEmail.trim() || !jiraApiToken.trim()) {
+      setIntegrationMessage(
+        "Preencha site URL, email e API token do Jira para salvar.",
+      );
+      return;
+    }
+
+    try {
+      setIntegrationBusy(true);
+      setIntegrationMessage(null);
+      await invoke("save_integration_connection", {
+        organizationId: orgSetupSelectedId,
+        provider: "jira",
+        displayName: "Jira",
+        configJson: JSON.stringify({
+          siteUrl: jiraSiteUrl.trim(),
+          email: jiraEmail.trim(),
+        }),
+        credentialsJson: buildJiraCredentialsJson(),
+      });
+      setJiraApiToken("");
+      setIntegrationMessage("Conexao Jira salva.");
+      await reloadIntegrationConnections();
+    } catch (saveError) {
+      setIntegrationMessage(
+        extractErrorMessage(saveError, "Falha ao salvar Jira"),
+      );
+    } finally {
+      setIntegrationBusy(false);
+    }
+  }
+
+  async function handleTestClickUpConnection() {
+    const connection = getPmConnection("clickup");
+    if (!clickUpApiToken.trim() && !connection?.hasCredentials) {
+      setIntegrationMessage("Informe o API token do ClickUp para testar.");
+      return;
+    }
+
+    try {
+      setIntegrationBusy(true);
+      setIntegrationMessage(null);
+      const result = await invoke<{
+        ok: boolean;
+        error?: string | null;
+        info?: { accountLabel?: string } | null;
+      }>("test_integration_connection", {
+        provider: "clickup",
+        configJson: "{}",
+        credentialsJson: clickUpApiToken.trim()
+          ? buildClickUpCredentialsJson()
+          : "{}",
+        connectionId: connection?.id ?? null,
+      });
+
+      if (result.ok) {
+        setIntegrationMessage(
+          `ClickUp conectado${result.info?.accountLabel ? `: ${result.info.accountLabel}` : ""}.`,
+        );
+        const teamsResponse = await invoke<{ teams: ClickUpTeamDto[] }>(
+          "list_clickup_teams",
+          {
+            apiToken: clickUpApiToken.trim() || null,
+            connectionId: clickUpApiToken.trim()
+              ? null
+              : (connection?.id ?? null),
+          },
+        );
+        setClickUpTeams(teamsResponse.teams);
+        if (!clickUpTeamId && teamsResponse.teams[0]) {
+          setClickUpTeamId(teamsResponse.teams[0].id);
+        }
+      } else {
+        setIntegrationMessage(result.error ?? "Falha ao testar ClickUp.");
+      }
+    } catch (testError) {
+      setIntegrationMessage(
+        extractErrorMessage(testError, "Falha ao testar ClickUp"),
+      );
+    } finally {
+      setIntegrationBusy(false);
+    }
+  }
+
+  async function handleSaveClickUpConnection() {
+    if (!orgSetupSelectedId) {
+      return;
+    }
+
+    if (!clickUpApiToken.trim()) {
+      setIntegrationMessage("Informe o API token do ClickUp para salvar.");
+      return;
+    }
+
+    if (!clickUpTeamId.trim()) {
+      setIntegrationMessage("Selecione um workspace (team) do ClickUp.");
+      return;
+    }
+
+    try {
+      setIntegrationBusy(true);
+      setIntegrationMessage(null);
+      await invoke("save_integration_connection", {
+        organizationId: orgSetupSelectedId,
+        provider: "clickup",
+        displayName: "ClickUp",
+        configJson: JSON.stringify({ teamId: clickUpTeamId.trim() }),
+        credentialsJson: buildClickUpCredentialsJson(),
+      });
+      setClickUpApiToken("");
+      setIntegrationMessage("Conexao ClickUp salva.");
+      await reloadIntegrationConnections();
+    } catch (saveError) {
+      setIntegrationMessage(
+        extractErrorMessage(saveError, "Falha ao salvar ClickUp"),
+      );
+    } finally {
+      setIntegrationBusy(false);
+    }
+  }
+
+  async function handleSyncPmTasks(provider?: "jira" | "clickup") {
+    if (!orgSetupSelectedId) {
+      return;
+    }
+
+    try {
+      setIntegrationBusy(true);
+      setIntegrationMessage(null);
+      const result = await invoke<PmSyncResultDto>(
+        "sync_organization_pm_tasks_command",
+        {
+          organizationId: orgSetupSelectedId,
+          provider: provider ?? null,
+        },
+      );
+      const summary = [
+        `${result.created} criadas`,
+        `${result.updated} atualizadas`,
+        `${result.unchanged} sem mudanca`,
+      ].join(" · ");
+      setIntegrationMessage(
+        result.errors.length > 0
+          ? `${summary} · ${result.errors.join(" · ")}`
+          : `Sync concluido: ${summary}.`,
+      );
+      await reloadIntegrationConnections();
+      await refreshDashboard();
+      const alerts = await invoke<DeadlineAlertsDto>("get_deadline_alerts");
+      setDeadlineAlerts(alerts);
+      await invoke<number>("notify_deadline_alerts");
+    } catch (syncError) {
+      setIntegrationMessage(
+        extractErrorMessage(syncError, "Falha ao sincronizar tarefas"),
+      );
+    } finally {
+      setIntegrationBusy(false);
+    }
+  }
+
   function openGitContextForRepo(repository: RepositoryListItemDto) {
     requestTaskFormClose(() => {
       setTaskFormMode(null);
@@ -4063,6 +4568,42 @@ export function App() {
                   <strong>{data.summary.blockedCount}</strong>
                 </article>
               </div>
+
+              {deadlineAlerts && deadlineAlerts.items.length > 0 ? (
+                <section
+                  className="integrationDeadlines"
+                  aria-label="Prazos das integracoes"
+                >
+                  <h3 className="subheading">Prazos das integracoes</h3>
+                  <ul className="historyList integrationDeadlineList">
+                    {deadlineAlerts.items.map((alert) => (
+                      <li key={`${alert.workItemId}-${alert.kind}`}>
+                        <div>
+                          <strong>{alert.title}</strong>
+                          <span>
+                            {formatDeadlineAlertKind(alert.kind)} ·{" "}
+                            {formatDateTime(alert.scheduledFor)}
+                            {alert.externalProvider
+                              ? ` · ${formatPmProviderLabel(alert.externalProvider)}`
+                              : ""}
+                          </span>
+                        </div>
+                        {alert.externalUrl ? (
+                          <a
+                            className="externalTaskLink"
+                            href={alert.externalUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            Abrir
+                          </a>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              ) : null}
+
               <div className="quickLinks">
                 <Button
                   type="button"
@@ -4405,6 +4946,18 @@ export function App() {
                     {relatedDependencyIds.has(item.id) ? (
                       <Badge variant="outline">Relacionada</Badge>
                     ) : null}
+                    {item.sourceType === "imported" && item.externalProvider ? (
+                      <Badge variant="outline">
+                        Importado ·{" "}
+                        {formatPmProviderLabel(item.externalProvider)}
+                        {item.externalKey ? ` · ${item.externalKey}` : ""}
+                      </Badge>
+                    ) : null}
+                    {item.scheduledFor ? (
+                      <Badge variant="outline">
+                        Prazo {formatDateTime(item.scheduledFor)}
+                      </Badge>
+                    ) : null}
                     <span>{formatTaskStatus(item.status)}</span>
                   </SelectableListItem>
                 ))}
@@ -4445,6 +4998,29 @@ export function App() {
                     <Badge variant="outline">
                       P{currentTask.priority ?? 3}
                     </Badge>
+                    {currentTask.sourceType === "imported" &&
+                    currentTask.externalProvider ? (
+                      <Badge variant="outline">
+                        Importado ·{" "}
+                        {formatPmProviderLabel(currentTask.externalProvider)}
+                        {currentTask.externalKey
+                          ? ` · ${currentTask.externalKey}`
+                          : ""}
+                      </Badge>
+                    ) : null}
+                    {currentTask.externalUrl ? (
+                      <a
+                        className="externalTaskLink"
+                        href={currentTask.externalUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        Abrir no{" "}
+                        {formatPmProviderLabel(
+                          currentTask.externalProvider ?? "pm",
+                        )}
+                      </a>
+                    ) : null}
                     <Button
                       type="button"
                       variant="outline"
@@ -5843,6 +6419,254 @@ export function App() {
                             </StatusAlert>
                           ),
                         )}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {orgDetailTab === "integrations" ? (
+                    <div className="orgDetailSection orgIntegrationsPanel">
+                      <div className="orgIdentityInfoCard">
+                        <SectionTitle icon={Info}>
+                          Integracoes desta empresa
+                        </SectionTitle>
+                        <p className="muted">
+                          Configurando integracoes para{" "}
+                          <strong>{orgSetupOrganization?.name}</strong>. Cada
+                          empresa tem conexoes Jira e ClickUp independentes —
+                          trocar de empresa nao compartilha tokens nem sync
+                          entre elas.
+                        </p>
+                        <ul className="orgIdentityInfoList">
+                          <li>
+                            Tarefas atribuidas a voce sao espelhadas no backlog
+                            WCP como <strong>importadas</strong> (somente
+                            leitura na v1).
+                          </li>
+                          <li>
+                            Prazos usam o campo <code>due</code> da ferramenta
+                            externa (<code>scheduled_for</code> no WCP).
+                          </li>
+                          <li>
+                            O sync nao altera repositorios Git nem identidade.
+                          </li>
+                          <li>
+                            No sync, o status externo prevalece sobre edicoes
+                            locais em tarefas importadas.
+                          </li>
+                        </ul>
+                      </div>
+
+                      {integrationMessage ? (
+                        <p className="resultText">{integrationMessage}</p>
+                      ) : null}
+
+                      <div className="sessionForm compactForm orgIntegrationCard">
+                        <SectionTitle icon={Plug}>Jira Cloud</SectionTitle>
+                        {getPmConnection("jira") ? (
+                          <Badge variant="success">
+                            Conectado nesta empresa
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline">
+                            Nao conectado nesta empresa
+                          </Badge>
+                        )}
+                        <p className="muted">
+                          Email + API token da Atlassian.{" "}
+                          <a
+                            href="https://support.atlassian.com/atlassian-account/docs/manage-api-tokens-for-your-atlassian-account/"
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            Como gerar token
+                          </a>
+                        </p>
+                        {getPmConnection("jira")?.lastSyncAt ? (
+                          <p className="muted">
+                            Ultima sync:{" "}
+                            {formatDateTime(
+                              getPmConnection("jira")?.lastSyncAt,
+                            )}
+                            {getPmConnection("jira")?.lastSyncError
+                              ? ` · Erro: ${getPmConnection("jira")?.lastSyncError}`
+                              : ""}
+                          </p>
+                        ) : null}
+                        <label>
+                          Site URL
+                          <input
+                            value={jiraSiteUrl}
+                            onChange={(event) =>
+                              setJiraSiteUrl(event.target.value)
+                            }
+                            placeholder="https://sua-empresa.atlassian.net"
+                          />
+                        </label>
+                        <label>
+                          Email
+                          <input
+                            type="email"
+                            value={jiraEmail}
+                            onChange={(event) =>
+                              setJiraEmail(event.target.value)
+                            }
+                            placeholder="voce@empresa.com"
+                          />
+                        </label>
+                        <label>
+                          API token
+                          <input
+                            type="password"
+                            value={jiraApiToken}
+                            onChange={(event) =>
+                              setJiraApiToken(event.target.value)
+                            }
+                            placeholder={
+                              getPmConnection("jira")?.hasCredentials
+                                ? "Deixe vazio no teste para usar salvo"
+                                : "Cole o token"
+                            }
+                          />
+                        </label>
+                        <div className="actionRow">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            disabled={integrationBusy}
+                            onClick={() => void handleTestJiraConnection()}
+                          >
+                            Testar
+                          </Button>
+                          <Button
+                            type="button"
+                            disabled={integrationBusy}
+                            onClick={() => void handleSaveJiraConnection()}
+                          >
+                            Salvar
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            disabled={
+                              integrationBusy || !getPmConnection("jira")
+                            }
+                            onClick={() => void handleSyncPmTasks("jira")}
+                          >
+                            Sincronizar Jira
+                          </Button>
+                        </div>
+                      </div>
+
+                      <div className="sessionForm compactForm orgIntegrationCard">
+                        <SectionTitle icon={Plug}>ClickUp</SectionTitle>
+                        {getPmConnection("clickup") ? (
+                          <Badge variant="success">
+                            Conectado nesta empresa
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline">
+                            Nao conectado nesta empresa
+                          </Badge>
+                        )}
+                        <p className="muted">
+                          Personal API token.{" "}
+                          <a
+                            href="https://clickup.com/api/developer-portal/authentication/"
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            Documentacao
+                          </a>
+                        </p>
+                        {getPmConnection("clickup")?.lastSyncAt ? (
+                          <p className="muted">
+                            Ultima sync:{" "}
+                            {formatDateTime(
+                              getPmConnection("clickup")?.lastSyncAt,
+                            )}
+                            {getPmConnection("clickup")?.lastSyncError
+                              ? ` · Erro: ${getPmConnection("clickup")?.lastSyncError}`
+                              : ""}
+                          </p>
+                        ) : null}
+                        <label>
+                          API token
+                          <input
+                            type="password"
+                            value={clickUpApiToken}
+                            onChange={(event) =>
+                              setClickUpApiToken(event.target.value)
+                            }
+                            placeholder={
+                              getPmConnection("clickup")?.hasCredentials
+                                ? "Deixe vazio no teste para usar salvo"
+                                : "pk_..."
+                            }
+                          />
+                        </label>
+                        {clickUpTeams.length > 0 ? (
+                          <label>
+                            Workspace (team)
+                            <select
+                              value={clickUpTeamId}
+                              onChange={(event) =>
+                                setClickUpTeamId(event.target.value)
+                              }
+                            >
+                              <option value="">Selecione</option>
+                              {clickUpTeams.map((team) => (
+                                <option key={team.id} value={team.id}>
+                                  {team.name}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                        ) : (
+                          <p className="muted">
+                            Clique em Testar para carregar os workspaces.
+                          </p>
+                        )}
+                        <div className="actionRow">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            disabled={integrationBusy}
+                            onClick={() => void handleTestClickUpConnection()}
+                          >
+                            Testar
+                          </Button>
+                          <Button
+                            type="button"
+                            disabled={integrationBusy}
+                            onClick={() => void handleSaveClickUpConnection()}
+                          >
+                            Salvar
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            disabled={
+                              integrationBusy || !getPmConnection("clickup")
+                            }
+                            onClick={() => void handleSyncPmTasks("clickup")}
+                          >
+                            Sincronizar ClickUp
+                          </Button>
+                        </div>
+                      </div>
+
+                      <div className="actionRow">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          disabled={
+                            integrationBusy ||
+                            integrationConnections.length === 0
+                          }
+                          onClick={() => void handleSyncPmTasks()}
+                        >
+                          Sincronizar todas as integracoes
+                        </Button>
                       </div>
                     </div>
                   ) : null}
@@ -7350,7 +8174,40 @@ function optionalFormValue(value: string): string | undefined {
 }
 
 function buildTaskPreviewLine(task: WorkItemDto): string | undefined {
-  return task.resumeSummary ?? task.description ?? undefined;
+  const parts: string[] = [];
+  if (task.resumeSummary?.trim()) {
+    parts.push(task.resumeSummary.trim());
+  } else if (task.description?.trim()) {
+    parts.push(task.description.trim());
+  }
+  if (task.scheduledFor) {
+    parts.push(`Prazo ${formatDateTime(task.scheduledFor)}`);
+  }
+  return parts.length > 0 ? parts.join(" · ") : undefined;
+}
+
+function formatPmProviderLabel(provider: string): string {
+  switch (provider) {
+    case "jira":
+      return "Jira";
+    case "clickup":
+      return "ClickUp";
+    default:
+      return provider;
+  }
+}
+
+function formatDeadlineAlertKind(kind: string): string {
+  switch (kind) {
+    case "overdue":
+      return "Vencido";
+    case "due_today":
+      return "Entrega hoje";
+    case "due_soon":
+      return "Em breve";
+    default:
+      return kind;
+  }
 }
 
 function getTaskFormWarnings(

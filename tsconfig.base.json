@@ -15,6 +15,7 @@
       "@wcp/application": ["packages/application/src/index.ts"],
       "@wcp/db": ["packages/db/src/index.ts"],
       "@wcp/integrations-git": ["packages/integrations-git/src/index.ts"],
+      "@wcp/integrations-pm": ["packages/integrations-pm/src/index.ts"],
       "@wcp/ui": ["packages/ui/src/index.ts"],
       "@wcp/shared": ["packages/shared/src/index.ts"]
     }

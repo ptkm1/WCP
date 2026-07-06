@@ -189,7 +189,7 @@ pub fn sqlite_exec(db_path: &Path, sql: &str) -> Result<(), String> {
 pub fn fetch_work_items(db_path: &Path) -> Result<Vec<WorkItemDto>, String> {
     let rows = sqlite_json(
         db_path,
-        "SELECT id, title, description, status, priority, organization_id, project_id, primary_repository_id, blocked_reason, resume_summary, source_type, updated_at FROM work_items ORDER BY priority ASC, updated_at DESC;",
+        "SELECT id, title, description, status, priority, organization_id, project_id, primary_repository_id, blocked_reason, resume_summary, source_type, scheduled_for, external_provider, external_id, external_key, external_url, updated_at FROM work_items ORDER BY priority ASC, updated_at DESC;",
     )?;
 
     Ok(rows.iter().map(map_work_item_row).collect())
@@ -202,7 +202,7 @@ pub fn fetch_work_item_by_id(
     let rows = sqlite_json(
         db_path,
         &format!(
-            "SELECT id, title, description, status, priority, organization_id, project_id, primary_repository_id, blocked_reason, resume_summary, source_type, updated_at
+            "SELECT id, title, description, status, priority, organization_id, project_id, primary_repository_id, blocked_reason, resume_summary, source_type, scheduled_for, external_provider, external_id, external_key, external_url, updated_at
              FROM work_items
              WHERE id = '{}'
              LIMIT 1;",
@@ -505,6 +505,11 @@ fn map_work_item_row(row: &Value) -> WorkItemDto {
         blocked_reason: get_optional_string(row, "blocked_reason"),
         resume_summary: get_optional_string(row, "resume_summary"),
         source_type: get_string(row, "source_type").unwrap_or_else(|| "manual".to_string()),
+        scheduled_for: get_optional_string(row, "scheduled_for"),
+        external_provider: get_optional_string(row, "external_provider"),
+        external_id: get_optional_string(row, "external_id"),
+        external_key: get_optional_string(row, "external_key"),
+        external_url: get_optional_string(row, "external_url"),
         updated_at: get_string(row, "updated_at").unwrap_or_default(),
     }
 }
@@ -834,10 +839,16 @@ fn map_note_row(row: &Value) -> KnowledgeNoteDto {
 }
 
 mod history;
+pub mod integrations;
 mod organizations;
 mod search;
 
 pub use history::list_context_history;
+pub use integrations::{
+    deadline_alert_sent_today, delete_integration_connection, empty_sync_result,
+    fetch_integration_connection_by_id, fetch_integration_connections, insert_activity_event,
+    update_integration_sync_status, upsert_imported_work_item, upsert_integration_connection,
+};
 pub use organizations::{
     clear_organization_logo, fetch_organization_by_id, fetch_organizations, insert_organization,
     read_organization_logo_data_url, set_organization_logo, update_environment_profile_for_org,

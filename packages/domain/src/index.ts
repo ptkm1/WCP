@@ -20,6 +20,7 @@ export type ProviderType =
   | "gitea"
   | "azure"
   | "other";
+export type PmProvider = "jira" | "clickup";
 export type WorkItemStatus =
   | "backlog"
   | "todo"
@@ -157,8 +158,46 @@ export interface WorkItem {
   blockedReason?: string | null;
   resumeSummary?: string | null;
   sourceType: SourceType;
+  externalProvider?: PmProvider | string | null;
+  externalId?: string | null;
+  externalKey?: string | null;
+  externalUrl?: string | null;
   createdAt: Timestamp;
   updatedAt: Timestamp;
+}
+
+export interface IntegrationConnection {
+  id: Id;
+  workspaceId: Id;
+  organizationId: Id;
+  provider: PmProvider;
+  displayName?: string | null;
+  configJson: string;
+  credentialKey: string;
+  isActive: boolean;
+  syncEnabled: boolean;
+  lastSyncAt?: Timestamp | null;
+  lastSyncError?: string | null;
+  syncFilterJson?: string | null;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}
+
+export interface ExternalTaskSnapshot {
+  externalId: string;
+  externalKey?: string | null;
+  externalUrl?: string | null;
+  title: string;
+  description?: string | null;
+  statusLabel: string;
+  dueAt?: string | null;
+  priority?: number | null;
+}
+
+export interface PmSyncFilter {
+  assigneeOnly?: boolean;
+  includeClosed?: boolean;
+  jql?: string | null;
 }
 
 export interface WorkItemDependency {
