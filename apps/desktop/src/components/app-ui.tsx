@@ -10,6 +10,7 @@ import {
   MAIN_VIEW_ICONS,
   type MainView,
 } from "@/lib/app-icons";
+import { getOrganizationAccent } from "@/lib/org-accent";
 import { cn } from "@/lib/utils";
 import {
   AlertTriangle,
@@ -182,7 +183,7 @@ export function FilterTabs<T extends string>({
       <div className="filterTabsScroll">
         <TabsList
           className={cn(
-            "inline-flex h-auto w-max max-w-none flex-nowrap gap-0.5 rounded-xl border border-border/80 bg-muted/25 p-1",
+            "inline-flex h-auto w-full max-w-full flex-wrap gap-1 rounded-xl border border-border/80 bg-muted/25 p-1",
             className,
           )}
           aria-label={ariaLabel}
@@ -265,16 +266,18 @@ export function OrganizationAvatar({
   name: string;
   kind?: string | null;
   logoUrl?: string | null;
-  size?: "sm" | "md" | "lg";
+  size?: "xs" | "sm" | "md" | "lg";
   className?: string;
 }) {
   const initials = buildOrganizationInitials(name);
   const sizeClass =
-    size === "sm"
-      ? "orgAvatar-sm"
-      : size === "lg"
-        ? "orgAvatar-lg"
-        : "orgAvatar-md";
+    size === "xs"
+      ? "orgAvatar-xs"
+      : size === "sm"
+        ? "orgAvatar-sm"
+        : size === "lg"
+          ? "orgAvatar-lg"
+          : "orgAvatar-md";
 
   return (
     <span
@@ -305,6 +308,44 @@ function buildOrganizationInitials(name: string): string {
     return parts[0].slice(0, 2).toUpperCase();
   }
   return `${parts[0][0] ?? ""}${parts[1][0] ?? ""}`.toUpperCase();
+}
+
+export function OrganizationBadge({
+  name,
+  organizationId,
+  kind,
+  logoUrl,
+  className,
+}: {
+  name: string;
+  organizationId?: string | null;
+  kind?: string | null;
+  logoUrl?: string | null;
+  className?: string;
+}) {
+  const accent = organizationId ? getOrganizationAccent(organizationId) : null;
+
+  return (
+    <span
+      className={cn(
+        "inline-flex max-w-[132px] min-w-0 items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-medium leading-none",
+        accent
+          ? [accent.bg, accent.border, accent.text]
+          : "border-border bg-muted/40 text-muted-foreground",
+        className,
+      )}
+      title={name}
+    >
+      <OrganizationAvatar
+        name={name}
+        kind={kind}
+        logoUrl={logoUrl}
+        size="xs"
+        className="shrink-0"
+      />
+      <span className="truncate">{name}</span>
+    </span>
+  );
 }
 
 export function SelectableListItem({
@@ -339,9 +380,11 @@ export function SelectableListItem({
       <div className="flex min-w-0 w-full items-start gap-3">
         {leading}
         <div className="min-w-0 flex-1">
-          <span className="min-w-0 font-semibold text-foreground">{title}</span>
+          <span className="block min-w-0 truncate font-semibold text-foreground">
+            {title}
+          </span>
           {subtitle ? (
-            <span className="mt-1 block min-w-0 line-clamp-2 text-xs text-muted-foreground">
+            <span className="mt-1 block min-w-0 truncate text-xs text-muted-foreground">
               {subtitle}
             </span>
           ) : null}

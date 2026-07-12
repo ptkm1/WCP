@@ -7,9 +7,9 @@
 }
 
 .shell {
-  width: 90vw;
-  max-width: 90vw;
-  min-width: min(90vw, 100%);
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .appHeader {
@@ -43,91 +43,6 @@
 .appTagline {
   font-size: 14px;
   color: #a1a1aa;
-}
-
-.focusChip {
-  display: grid;
-  gap: 2px;
-  max-width: 320px;
-  padding: 10px 14px;
-  border-radius: 14px;
-  background: rgba(20, 20, 20, 0.95);
-  border: 1px solid rgba(34, 197, 94, 0.14);
-}
-
-.focusChipLabel {
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: #71717a;
-}
-
-.focusChip strong {
-  font-size: 14px;
-  line-height: 1.35;
-}
-
-.appNav {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.navItem {
-  display: grid;
-  gap: 2px;
-  text-align: left;
-  padding: 12px 14px;
-  border-radius: 16px;
-  border: 1px solid rgba(34, 197, 94, 0.16);
-  background: rgba(15, 15, 15, 0.85);
-  color: #d4d4d8;
-  cursor: pointer;
-  font: inherit;
-  transition:
-    background 120ms ease,
-    border-color 120ms ease,
-    color 120ms ease;
-}
-
-.navItem:hover {
-  border-color: rgba(34, 197, 94, 0.35);
-  background: rgba(20, 20, 20, 0.95);
-}
-
-.navItem-active {
-  background: rgba(34, 197, 94, 0.12);
-  color: #4ade80;
-  border-color: rgba(34, 197, 94, 0.45);
-  box-shadow: inset 0 0 0 1px rgba(34, 197, 94, 0.15);
-}
-
-.navItemLabel {
-  font-size: 15px;
-  font-weight: 600;
-}
-
-.navItemHint {
-  font-size: 12px;
-  opacity: 0.82;
-}
-
-.pageHeader {
-  margin-bottom: 18px;
-}
-
-.pageHeader h1 {
-  margin: 0 0 6px;
-  font-size: 30px;
-  line-height: 1.15;
-  letter-spacing: -0.02em;
-}
-
-.pageHeader p {
-  margin: 0;
-  color: #a1a1aa;
-  font-size: 15px;
-  line-height: 1.5;
 }
 
 .panelHeading {
@@ -438,6 +353,12 @@
   font-size: 10px;
 }
 
+.orgAvatar-xs {
+  width: 16px;
+  height: 16px;
+  font-size: 8px;
+}
+
 .orgAvatar-md {
   width: 36px;
   height: 36px;
@@ -539,6 +460,13 @@
   display: flex;
   align-items: center;
   gap: 10px;
+  min-width: 0;
+}
+
+.contextChainHeader .dayBriefLine,
+.contextOrgLine > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .orgRepoMapping {
@@ -559,7 +487,12 @@
 
 .backlogPanel {
   min-width: 0;
-  overflow: hidden;
+}
+
+.backlogListView {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
 }
 
 .backlogLayout {
@@ -890,7 +823,7 @@
 .confirmDialogOverlay {
   position: fixed;
   inset: 0;
-  z-index: 100;
+  z-index: 300;
   display: grid;
   place-items: center;
   padding: 24px;
@@ -899,7 +832,8 @@
 }
 
 .confirmDialogPanel {
-  width: min(100%, 480px);
+  width: fit-content;
+  max-width: 90vw;
   margin: 0;
   display: grid;
   gap: 16px;
@@ -1003,6 +937,7 @@
   font-size: 0.85rem;
   text-decoration: none;
   white-space: nowrap;
+  margin-right: 30px;
 }
 
 .externalTaskLink:hover {
@@ -1069,7 +1004,7 @@
 }
 
 .repoPanel {
-  overflow: hidden;
+  min-width: 0;
 }
 
 .repoHeader {
@@ -1187,13 +1122,9 @@
 
 .actionRow {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
   gap: 12px;
-}
-
-.primaryButton {
-  font: inherit;
-  cursor: pointer;
 }
 
 .resultText {
@@ -1294,12 +1225,10 @@
 }
 
 .filterTabsScroll {
-  overflow-x: auto;
-  overflow-y: hidden;
-  -webkit-overflow-scrolling: touch;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(34, 197, 94, 0.35) transparent;
-  padding-bottom: 2px;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-y: visible;
 }
 
 .filterTabsScroll::-webkit-scrollbar {
@@ -1342,11 +1271,57 @@
   min-width: 0;
 }
 
-@container task-detail (max-width: 720px) {
-  .taskDetailGrid {
-    grid-template-columns: 1fr;
-  }
+.taskDetailSections {
+  display: grid;
+  gap: 18px;
+  min-width: 0;
+}
 
+.detailSection {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.detailSectionHeader {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.detailSectionHeader .subheading {
+  margin: 0;
+}
+
+.detailSectionAction {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.detailSectionBody {
+  min-width: 0;
+}
+
+.taskQuickActions {
+  display: grid;
+  gap: 10px;
+}
+
+.taskQuickActions .timelineFilters {
+  flex-wrap: wrap;
+  overflow-x: visible;
+  margin-bottom: 0;
+}
+
+.taskContextSummary {
+  display: grid;
+  gap: 12px;
+}
+
+@container task-detail (max-width: 720px) {
   .taskDetailHeader {
     flex-direction: column;
     align-items: stretch;
@@ -1355,12 +1330,6 @@
   .taskDetailActions {
     width: 100%;
   }
-}
-
-.taskContextSummary {
-  grid-column: 1 / -1;
-  display: grid;
-  gap: 12px;
 }
 
 .subheading {
@@ -1438,11 +1407,13 @@
   border: 1px solid rgba(34, 197, 94, 0.12);
   background: #141414;
   padding: 14px;
+  min-width: 0;
 }
 
 .timelineItem div {
   display: grid;
   gap: 4px;
+  min-width: 0;
 }
 
 .timelineItem span {
@@ -1631,6 +1602,7 @@
   border-radius: 20px;
   background: linear-gradient(135deg, #141414 0%, rgba(34, 197, 94, 0.08) 100%);
   border: 1px solid rgba(34, 197, 94, 0.16);
+  min-width: 0;
 }
 
 .contextSteps {
@@ -1700,6 +1672,35 @@
   border-radius: 16px;
   background: rgba(255, 255, 255, 0.04);
   border: 1px solid rgba(34, 197, 94, 0.12);
+  min-width: 0;
+}
+
+.reposWizardLayout {
+  display: grid;
+  grid-template-columns: minmax(200px, 260px) minmax(0, 1fr);
+  gap: 18px;
+  min-width: 0;
+  align-items: start;
+}
+
+.reposWizardLayout > * {
+  min-width: 0;
+}
+
+.reposWizardSidebar {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+}
+
+.reposWizardMain {
+  align-content: start;
+}
+
+.reposWizardDetails {
+  margin-top: 4px;
+  padding-top: 20px;
+  border-top: 1px solid rgba(34, 197, 94, 0.12);
 }
 
 .contextRepoPicker {
@@ -1714,10 +1715,35 @@
   border-radius: 16px;
   background: rgba(255, 255, 255, 0.06);
   border: 1px solid rgba(34, 197, 94, 0.14);
+  align-content: start;
 }
 
 .addProjectPanel .subheading {
   margin: 0;
+}
+
+.addProjectPanelCompact {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.addProjectPanelCompact .panelHeading {
+  margin-bottom: 0;
+}
+
+.addProjectPanelMeta {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 900px) {
+  .addProjectPanelCompact {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .addProjectPanelCompact .panelHeading {
+    margin-bottom: 0;
+  }
 }
 
 .contextSectionLabel {
@@ -1760,6 +1786,15 @@
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
+}
+
+.contextIdentityCard article {
+  min-width: 0;
+}
+
+.contextIdentityCard strong {
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .contextIdentityCard article {
@@ -1846,6 +1881,10 @@
   .backlogList {
     max-height: none;
     overflow-y: visible;
+  }
+
+  .reposWizardLayout {
+    grid-template-columns: 1fr;
   }
 }
 

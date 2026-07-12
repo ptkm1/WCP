@@ -2,30 +2,54 @@ import {
   ConfirmDialog,
   ContextStepsBar,
   FilterTabs,
-  HistoryEventButton,
-  MainViewTabs,
   OrganizationAvatar,
-  PageHeader,
   PlanStatusBadge,
   SearchField,
-  SearchResultButton,
   SectionTitle,
   SelectableListItem,
   StatusAlert,
   StatusBadge,
-  TimelineEntry,
 } from "@/components/app-ui";
+import { AppShell } from "@/components/layout/AppShell";
+import { AppSidebar } from "@/components/layout/AppSidebar";
+import { AppTopBar, ViewHeader } from "@/components/layout/AppTopBar";
+import { DetailSection } from "@/components/layout/DetailSection";
+import { SplitLayout } from "@/components/layout/SplitLayout";
+import { OrgLinkRepositoryDialog } from "@/components/organizations/OrgLinkRepositoryDialog";
+import { OrgProjectCreateDialog } from "@/components/organizations/OrgProjectCreateDialog";
+import { OrgReassignRepositoryDialog } from "@/components/organizations/OrgReassignRepositoryDialog";
+import { OrganizationCreateDialog } from "@/components/organizations/OrganizationCreateDialog";
+import { PmProjectMappingDialog } from "@/components/organizations/PmProjectMappingDialog";
+import { AddRepositoryDialog } from "@/components/repos/AddRepositoryDialog";
+import { EditRepositoryPathDialog } from "@/components/repos/EditRepositoryPathDialog";
+import { RepositoryNoteDialog } from "@/components/repos/RepositoryNoteDialog";
+import { TaskDetailPanel } from "@/components/tasks/TaskDetailPanel";
+import { TaskListItem } from "@/components/tasks/TaskListItem";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  FieldCheckbox,
+  FieldSelect,
+  ORG_KIND_OPTIONS,
+  PROVIDER_TYPE_OPTIONS,
+  SessionFieldInput,
+  SessionFieldSelect,
+  SessionFieldTextarea,
+} from "@/components/ui/form-fields";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
-import {
-  HISTORY_KIND_ICONS,
-  ORG_TAB_ICONS,
-  getSearchKindIcon,
-} from "@/lib/app-icons";
+import { Popover } from "@/components/ui/popover";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { ORG_TAB_ICONS } from "@/lib/app-icons";
+import { BacklogView, OrganizationsView, ReposView, TodayView } from "@/views";
+import { HistoryView } from "@/views/HistoryView";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
@@ -40,7 +64,6 @@ import {
   Building2,
   FolderGit2,
   GitBranch,
-  History,
   Image,
   Info,
   Link2,
@@ -685,7 +708,7 @@ const VIEW_PAGE_HINT: Record<DesktopView, string> = {
 
 const ORG_DETAIL_TABS: { id: OrgDetailTab; label: string }[] = [
   { id: "company", label: "Empresa" },
-  { id: "projects", label: "Projetos" },
+  { id: "projects", label: "Projetos PM" },
   { id: "repos", label: "Repos" },
   { id: "identity", label: "Identidade Git" },
   { id: "integrations", label: "Integracoes" },
@@ -767,14 +790,6 @@ async function pickOrganizationLogoFile(): Promise<string | null> {
   return Array.isArray(picked) ? (picked[0] ?? null) : picked;
 }
 
-interface LocalPathFieldProps {
-  path: string;
-  inspecting: boolean;
-  onPathChange: (value: string) => void;
-  onBrowse: () => void;
-  onInspect: () => void;
-}
-
 interface TaskFormPanelProps {
   mode: "create" | "edit";
   draft: TaskFormDraft;
@@ -833,85 +848,70 @@ function TaskFormPanel({
         </div>
 
         <div className="sessionForm compactForm">
-          <label className="grid gap-2 text-sm">
-            <Label htmlFor="task-title">Titulo</Label>
-            <Input
-              id="task-title"
-              value={draft.title}
-              onChange={(event) => onDraftChange({ title: event.target.value })}
-              placeholder="Ex.: corrigir refresh token no login"
-            />
-          </label>
+          <SessionFieldInput
+            id="task-title"
+            label="Titulo"
+            value={draft.title}
+            onChange={(event) => onDraftChange({ title: event.target.value })}
+            placeholder="Ex.: corrigir refresh token no login"
+          />
 
-          <label className="grid gap-2 text-sm">
-            <Label htmlFor="task-description">Descricao curta</Label>
-            <Textarea
-              id="task-description"
-              value={draft.description}
-              onChange={(event) =>
-                onDraftChange({ description: event.target.value })
-              }
-              placeholder="O que precisa ser feito, em uma frase"
-              rows={3}
-            />
-          </label>
+          <SessionFieldTextarea
+            id="task-description"
+            label="Descricao curta"
+            value={draft.description}
+            onChange={(event) =>
+              onDraftChange({ description: event.target.value })
+            }
+            placeholder="O que precisa ser feito, em uma frase"
+            rows={3}
+          />
 
           <div className="historyFilterRow">
-            <label className="grid gap-2 text-sm text-muted-foreground">
-              <Label htmlFor="task-status">Status</Label>
-              <select
-                id="task-status"
-                value={draft.status}
-                onChange={(event) =>
-                  onDraftChange({ status: event.target.value })
-                }
-              >
-                {TASK_STATUS_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="grid gap-2 text-sm text-muted-foreground">
-              <Label htmlFor="task-priority">Prioridade</Label>
-              <select
-                id="task-priority"
-                value={draft.priority}
-                onChange={(event) =>
-                  onDraftChange({ priority: Number(event.target.value) })
-                }
-              >
-                {TASK_PRIORITY_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <SessionFieldSelect
+              id="task-status"
+              label="Status"
+              value={draft.status}
+              onValueChange={(status) => onDraftChange({ status })}
+              options={TASK_STATUS_OPTIONS.map((option) => ({
+                value: option.value,
+                label: option.label,
+              }))}
+            />
+            <SessionFieldSelect
+              id="task-priority"
+              label="Prioridade"
+              value={String(draft.priority)}
+              onValueChange={(priority) =>
+                onDraftChange({ priority: Number(priority) })
+              }
+              options={TASK_PRIORITY_OPTIONS.map((option) => ({
+                value: String(option.value),
+                label: option.label,
+              }))}
+            />
           </div>
 
           <div className="historyFilterRow">
-            <label className="grid gap-2 text-sm text-muted-foreground">
-              <Label htmlFor="task-org">Empresa</Label>
-              <select
+            <div className="grid gap-2">
+              <SessionFieldSelect
                 id="task-org"
+                label="Empresa"
                 value={draft.organizationId}
-                onChange={(event) =>
+                allowEmpty
+                emptyLabel="Nenhuma"
+                onValueChange={(organizationId) =>
                   onDraftChange({
-                    organizationId: event.target.value,
+                    organizationId,
                     projectId: "",
                     primaryRepositoryId: "",
                   })
                 }
-              >
-                <option value="">Nenhuma</option>
-                {organizations.map((organization) => (
-                  <option key={organization.id} value={organization.id}>
-                    {organization.name}
-                  </option>
-                ))}
-              </select>
+                options={organizations.map((organization) => ({
+                  value: organization.id,
+                  label: organization.name,
+                }))}
+              />
               {selectedOrganization ? (
                 <span className="taskOrgPreview">
                   <OrganizationAvatar
@@ -925,70 +925,58 @@ function TaskFormPanel({
                   <span>{selectedOrganization.name}</span>
                 </span>
               ) : null}
-            </label>
-            <label className="grid gap-2 text-sm text-muted-foreground">
-              <Label htmlFor="task-project">Projeto</Label>
-              <select
-                id="task-project"
-                value={draft.projectId}
-                onChange={(event) =>
-                  onDraftChange({ projectId: event.target.value })
-                }
-              >
-                <option value="">Nenhum</option>
-                {filteredProjects.map((project) => (
-                  <option key={project.id} value={project.id}>
-                    {project.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="grid gap-2 text-sm text-muted-foreground">
-              <Label htmlFor="task-repo">Repositorio principal</Label>
-              <select
-                id="task-repo"
-                value={draft.primaryRepositoryId}
-                onChange={(event) =>
-                  onDraftChange({ primaryRepositoryId: event.target.value })
-                }
-              >
-                <option value="">Nenhum</option>
-                {filteredRepositories.map((repository) => (
-                  <option key={repository.id} value={repository.id}>
-                    {repository.name}
-                  </option>
-                ))}
-              </select>
-            </label>
+            </div>
+            <SessionFieldSelect
+              id="task-project"
+              label="Projeto"
+              value={draft.projectId}
+              allowEmpty
+              emptyLabel="Nenhum"
+              onValueChange={(projectId) => onDraftChange({ projectId })}
+              options={filteredProjects.map((project) => ({
+                value: project.id,
+                label: project.name,
+              }))}
+            />
+            <SessionFieldSelect
+              id="task-repo"
+              label="Repositorio principal"
+              value={draft.primaryRepositoryId}
+              allowEmpty
+              emptyLabel="Nenhum"
+              onValueChange={(primaryRepositoryId) =>
+                onDraftChange({ primaryRepositoryId })
+              }
+              options={filteredRepositories.map((repository) => ({
+                value: repository.id,
+                label: repository.name,
+              }))}
+            />
           </div>
 
           {draft.status === "blocked" ? (
-            <label className="grid gap-2 text-sm">
-              <Label htmlFor="task-blocked">Motivo do bloqueio</Label>
-              <Textarea
-                id="task-blocked"
-                value={draft.blockedReason}
-                onChange={(event) =>
-                  onDraftChange({ blockedReason: event.target.value })
-                }
-                placeholder="Ex.: aguardando definicao da task #128"
-                rows={2}
-              />
-            </label>
-          ) : null}
-
-          <label className="grid gap-2 text-sm">
-            <Label htmlFor="task-resume">Resumo de retomada</Label>
-            <Textarea
-              id="task-resume"
-              value={draft.resumeSummary}
+            <SessionFieldTextarea
+              id="task-blocked"
+              label="Motivo do bloqueio"
+              value={draft.blockedReason}
               onChange={(event) =>
-                onDraftChange({ resumeSummary: event.target.value })
+                onDraftChange({ blockedReason: event.target.value })
               }
-              placeholder="O que voce precisa lembrar para continuar depois"
+              placeholder="Ex.: aguardando definicao da task #128"
               rows={2}
             />
-          </label>
+          ) : null}
+
+          <SessionFieldTextarea
+            id="task-resume"
+            label="Resumo de retomada"
+            value={draft.resumeSummary}
+            onChange={(event) =>
+              onDraftChange({ resumeSummary: event.target.value })
+            }
+            placeholder="O que voce precisa lembrar para continuar depois"
+            rows={2}
+          />
 
           {warnings.length > 0 ? (
             <StatusAlert status="warning" title="Revise antes de salvar">
@@ -1020,39 +1008,6 @@ function TaskFormPanel({
   );
 }
 
-function LocalPathField({
-  path,
-  inspecting,
-  onPathChange,
-  onBrowse,
-  onInspect,
-}: LocalPathFieldProps) {
-  return (
-    <label className="grid gap-2 text-sm">
-      <Label>Pasta local</Label>
-      <div className="inputWithAction flex flex-wrap gap-2">
-        <Input
-          className="min-w-[240px] flex-1"
-          value={path}
-          onChange={(event) => onPathChange(event.target.value)}
-          placeholder="/Users/voce/Code/meu-projeto"
-        />
-        <Button type="button" variant="outline" onClick={onBrowse}>
-          Escolher pasta
-        </Button>
-        <Button
-          type="button"
-          variant="outline"
-          onClick={onInspect}
-          disabled={inspecting || !path.trim()}
-        >
-          {inspecting ? "Detectando..." : "Detectar Git"}
-        </Button>
-      </div>
-    </label>
-  );
-}
-
 export function App() {
   const [data, setData] = useState<DashboardDto | null>(null);
   const [taskContext, setTaskContext] = useState<TaskContextDto | null>(null);
@@ -1073,6 +1028,9 @@ export function App() {
     useState<TaskFormDraft | null>(null);
   const [showArchivedBacklog, setShowArchivedBacklog] = useState(false);
   const [showDismissedBacklog, setShowDismissedBacklog] = useState(false);
+  const [backlogFiltersOpen, setBacklogFiltersOpen] = useState(false);
+  const [taskDetailDialogOpen, setTaskDetailDialogOpen] = useState(false);
+  const [taskActionsMenuOpen, setTaskActionsMenuOpen] = useState(false);
   const [backlogSearchQuery, setBacklogSearchQuery] = useState("");
   const [backlogStatusFilter, setBacklogStatusFilter] = useState<string>("all");
   const [backlogOrgFilter, setBacklogOrgFilter] = useState<string>("all");
@@ -1114,20 +1072,17 @@ export function App() {
   const [sessionResult, setSessionResult] = useState("");
   const [sessionDecisions, setSessionDecisions] = useState("");
   const [sessionBusy, setSessionBusy] = useState(false);
-  const [noteTitle, setNoteTitle] = useState("");
-  const [noteContent, setNoteContent] = useState("");
-  const [artifactTitle, setArtifactTitle] = useState("");
-  const [artifactUrl, setArtifactUrl] = useState("");
   const [contextBusy, setContextBusy] = useState(false);
-  const [repoNoteTitle, setRepoNoteTitle] = useState("");
-  const [repoNoteContent, setRepoNoteContent] = useState("");
-  const [dependencyTargetId, setDependencyTargetId] = useState("");
-  const [dependencyRelation, setDependencyRelation] = useState<
-    "depends_on" | "blocks"
-  >("depends_on");
   const [dependencyBusy, setDependencyBusy] = useState(false);
   const [dependencyError, setDependencyError] = useState<string | null>(null);
-  const [showAddProjectForm, setShowAddProjectForm] = useState(false);
+  const [orgCreateDialogOpen, setOrgCreateDialogOpen] = useState(false);
+  const [orgProjectDialogOpen, setOrgProjectDialogOpen] = useState(false);
+  const [orgLinkRepoDialogOpen, setOrgLinkRepoDialogOpen] = useState(false);
+  const [orgReassignDialogOpen, setOrgReassignDialogOpen] = useState(false);
+  const [pmMappingDialogOpen, setPmMappingDialogOpen] = useState(false);
+  const [addRepoDialogOpen, setAddRepoDialogOpen] = useState(false);
+  const [editRepoPathDialogOpen, setEditRepoPathDialogOpen] = useState(false);
+  const [repoNoteDialogOpen, setRepoNoteDialogOpen] = useState(false);
   const [newProjectName, setNewProjectName] = useState("");
   const [newProjectPath, setNewProjectPath] = useState("");
   const [newProjectRemoteUrl, setNewProjectRemoteUrl] = useState("");
@@ -1136,7 +1091,6 @@ export function App() {
   const [newProjectInspecting, setNewProjectInspecting] = useState(false);
   const [newProjectSaving, setNewProjectSaving] = useState(false);
   const [newProjectError, setNewProjectError] = useState<string | null>(null);
-  const [showEditProjectPathForm, setShowEditProjectPathForm] = useState(false);
   const [editProjectPath, setEditProjectPath] = useState("");
   const [editProjectRemoteUrl, setEditProjectRemoteUrl] = useState("");
   const [editProjectInspection, setEditProjectInspection] =
@@ -1158,6 +1112,8 @@ export function App() {
   const [historyOrgFilter, setHistoryOrgFilter] = useState<string>("all");
   const sessionPanelRef = useRef<HTMLElement | null>(null);
   const [historyTextQuery, setHistoryTextQuery] = useState("");
+  const [historyAdvancedFiltersOpen, setHistoryAdvancedFiltersOpen] =
+    useState(false);
   const [historySearchResults, setHistorySearchResults] = useState<
     SearchResultDto[] | null
   >(null);
@@ -1166,9 +1122,6 @@ export function App() {
     null,
   );
   const [orgDetailTab, setOrgDetailTab] = useState<OrgDetailTab>("company");
-  const [showNewOrgForm, setShowNewOrgForm] = useState(false);
-  const [newOrgName, setNewOrgName] = useState("");
-  const [newOrgKind, setNewOrgKind] = useState("company");
   const [orgEditName, setOrgEditName] = useState("");
   const [orgEditKind, setOrgEditKind] = useState("company");
   const [orgSetupBusy, setOrgSetupBusy] = useState(false);
@@ -1183,8 +1136,6 @@ export function App() {
   const [orgSetupError, setOrgSetupError] = useState<string | null>(null);
   const [orgSetupSuccess, setOrgSetupSuccess] = useState<string | null>(null);
   const [orgEnvFormDirty, setOrgEnvFormDirty] = useState(false);
-  const [newOrgProjectName, setNewOrgProjectName] = useState("");
-  const [newOrgProjectDescription, setNewOrgProjectDescription] = useState("");
   const [orgEnvProviderType, setOrgEnvProviderType] = useState("");
   const [orgEnvProviderHost, setOrgEnvProviderHost] = useState("");
   const [orgEnvSshHostAlias, setOrgEnvSshHostAlias] = useState("");
@@ -1203,8 +1154,6 @@ export function App() {
   const [orgLinkInspection, setOrgLinkInspection] =
     useState<LocalRepositoryInspectionDto | null>(null);
   const [orgLinkInspecting, setOrgLinkInspecting] = useState(false);
-  const [reassignRepoId, setReassignRepoId] = useState("");
-  const [reassignProjectId, setReassignProjectId] = useState("");
   const [orgIdentityRepoId, setOrgIdentityRepoId] = useState<string | null>(
     null,
   );
@@ -1256,11 +1205,6 @@ export function App() {
     PmProjectMappingDto[]
   >([]);
   const [pmExternalProjects, setPmExternalProjects] = useState<string[]>([]);
-  const [pmMappingDraft, setPmMappingDraft] = useState({
-    externalProjectKey: "",
-    projectId: "",
-    defaultRepositoryId: "",
-  });
   const [jiraSyncFilter, setJiraSyncFilter] = useState<SyncFilterFormState>({
     ...DEFAULT_SYNC_FILTER,
   });
@@ -1342,6 +1286,7 @@ export function App() {
   }, [organizations, orgSetupSelectedId]);
 
   const orgEnvSyncRef = useRef<string | null>(null);
+  const orgIdentityContextRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (orgSetupSelectedId !== orgEnvSyncRef.current) {
@@ -1383,6 +1328,29 @@ export function App() {
         return current;
       }
       return importableRepos[0]?.id ?? null;
+    });
+  }, [orgSetupSelectedId, repositories]);
+
+  useEffect(() => {
+    const orgRepos = repositories.filter(
+      (repository) => repository.organizationId === orgSetupSelectedId,
+    );
+
+    if (orgIdentityContextRef.current !== orgSetupSelectedId) {
+      orgIdentityContextRef.current = orgSetupSelectedId;
+      setOrgIdentityGuardrail(null);
+      setOrgIdentityResult(null);
+      setOrgIdentityBusy(false);
+    }
+
+    setOrgIdentityRepoId((current) => {
+      if (!orgSetupSelectedId || orgRepos.length === 0) {
+        return null;
+      }
+      if (current && orgRepos.some((repository) => repository.id === current)) {
+        return current;
+      }
+      return orgRepos[0]?.id ?? null;
     });
   }, [orgSetupSelectedId, repositories]);
 
@@ -1449,11 +1417,19 @@ export function App() {
       setIntegrationConnections([]);
       clearIntegrationFormState();
       setIntegrationMessage(null);
+      setPmProjectMappings([]);
+      setPmExternalProjects([]);
+      setIntegrationWizardStep("choose");
+      setIntegrationWizardProvider(null);
       return;
     }
 
     clearIntegrationFormState();
     setIntegrationMessage(null);
+    setPmProjectMappings([]);
+    setPmExternalProjects([]);
+    setIntegrationWizardStep("choose");
+    setIntegrationWizardProvider(null);
 
     let cancelled = false;
     invoke<IntegrationConnectionDto[]>("list_integration_connections", {
@@ -1668,8 +1644,6 @@ export function App() {
 
   useEffect(() => {
     setTimelineFilter("all");
-    setDependencyTargetId("");
-    setDependencyRelation("depends_on");
     setDependencyError(null);
   }, [selectedTaskId]);
 
@@ -1707,10 +1681,14 @@ export function App() {
     if (!selectedRepoId) {
       setSelectedGuardrail(null);
       setHookStatus(null);
+      setRepoMemory(null);
       return;
     }
 
     let cancelled = false;
+    setSelectedGuardrail(null);
+    setHookStatus(null);
+    setRepoMemory(null);
     setRepoLoading(true);
 
     async function loadGuardrail() {
@@ -2166,17 +2144,17 @@ export function App() {
     }
   }
 
-  async function handleCreateProject() {
+  async function handleCreateProject(): Promise<boolean> {
     if (selectedOrganizationId === "all") {
       setNewProjectError("Selecione uma empresa antes de cadastrar o projeto.");
-      return;
+      return false;
     }
 
     const trimmedName = newProjectName.trim();
     const trimmedPath = newProjectPath.trim();
     if (!trimmedName || !trimmedPath) {
       setNewProjectError("Informe nome e pasta local do projeto.");
-      return;
+      return false;
     }
 
     try {
@@ -2199,26 +2177,27 @@ export function App() {
       await reloadRepositories();
       handleSelectRepository(response.repository);
       resetAddProjectForm();
-      setShowAddProjectForm(false);
       setRepoError(null);
+      return true;
     } catch (createError) {
       setNewProjectError(
         extractErrorMessage(createError, "Falha ao cadastrar projeto"),
       );
+      return false;
     } finally {
       setNewProjectSaving(false);
     }
   }
 
-  async function handleUpdateProjectPath() {
+  async function handleUpdateProjectPath(): Promise<boolean> {
     if (!selectedRepoId) {
-      return;
+      return false;
     }
 
     const trimmedPath = editProjectPath.trim();
     if (!trimmedPath) {
       setEditProjectError("Informe a pasta local do projeto.");
-      return;
+      return false;
     }
 
     try {
@@ -2237,13 +2216,14 @@ export function App() {
 
       await reloadRepositories();
       handleSelectRepository(response.repository);
-      setShowEditProjectPathForm(false);
       setRepoError(null);
       await refreshRepositoryContext(false);
+      return true;
     } catch (updateError) {
       setEditProjectError(
         extractErrorMessage(updateError, "Falha ao atualizar pasta local"),
       );
+      return false;
     } finally {
       setEditProjectSaving(false);
     }
@@ -2332,12 +2312,63 @@ export function App() {
     showArchivedBacklog,
     showDismissedBacklog,
   ]);
+  const backlogActiveFilterCount = useMemo(() => {
+    let count = 0;
+    if (backlogStatusFilter !== "all") count += 1;
+    if (backlogOrgFilter !== "all") count += 1;
+    if (backlogSourceFilter !== "all") count += 1;
+    if (backlogDeadlineFilter !== "all") count += 1;
+    if (backlogSort !== "priority") count += 1;
+    if (showArchivedBacklog) count += 1;
+    if (showDismissedBacklog) count += 1;
+    return count;
+  }, [
+    backlogDeadlineFilter,
+    backlogOrgFilter,
+    backlogSort,
+    backlogSourceFilter,
+    backlogStatusFilter,
+    showArchivedBacklog,
+    showDismissedBacklog,
+  ]);
   const taskFormWarnings = useMemo(
     () =>
       getTaskFormWarnings(taskFormDraft, projects, repositories, organizations),
     [taskFormDraft, projects, repositories, organizations],
   );
-  const currentTask = taskContext?.task ?? data?.currentTask ?? null;
+  const currentTask = useMemo(() => {
+    if (!selectedTaskId) {
+      return taskContext?.task ?? data?.currentTask ?? null;
+    }
+
+    if (taskContext?.task?.id === selectedTaskId) {
+      return taskContext.task;
+    }
+
+    const fromBacklog = filteredBacklog.find(
+      (item) => item.id === selectedTaskId,
+    );
+    if (fromBacklog) {
+      return fromBacklog;
+    }
+
+    const fromPlan = planMap.get(selectedTaskId);
+    if (fromPlan) {
+      return fromPlan;
+    }
+
+    if (data?.currentTask?.id === selectedTaskId) {
+      return data.currentTask;
+    }
+
+    return null;
+  }, [
+    selectedTaskId,
+    taskContext?.task,
+    filteredBacklog,
+    planMap,
+    data?.currentTask,
+  ]);
   const headerFocusTask = useMemo(() => {
     if (data?.activeSession?.workItemId) {
       return (
@@ -2390,22 +2421,6 @@ export function App() {
       ),
     [taskContext?.dependencies],
   );
-  const dependencyPreviewText = useMemo(() => {
-    if (!currentTask || !dependencyTargetId) {
-      return null;
-    }
-
-    const targetTitle = planMap.get(dependencyTargetId)?.title;
-    if (!targetTitle) {
-      return null;
-    }
-
-    return formatDependencyPreview(
-      currentTask.title,
-      dependencyRelation,
-      targetTitle,
-    );
-  }, [currentTask, dependencyRelation, dependencyTargetId, planMap]);
   const groupedSearchResults = useMemo(() => {
     const groups = Object.fromEntries(
       SEARCH_KIND_ORDER.map((kind) => [kind, [] as SearchResultDto[]]),
@@ -2910,11 +2925,14 @@ export function App() {
     }
   }
 
-  async function handleCreateOrganization() {
-    const trimmedName = newOrgName.trim();
+  async function handleCreateOrganization(
+    name: string,
+    kind: string,
+  ): Promise<boolean> {
+    const trimmedName = name.trim();
     if (!trimmedName) {
       setOrgSetupError("Informe o nome da empresa.");
-      return;
+      return false;
     }
 
     try {
@@ -2924,18 +2942,17 @@ export function App() {
         "create_organization",
         {
           name: trimmedName,
-          kind: newOrgKind,
+          kind,
         },
       );
       await reloadOrganizations();
       setOrgSetupSelectedId(response.organization.id);
-      setShowNewOrgForm(false);
-      setNewOrgName("");
-      setNewOrgKind("company");
+      return true;
     } catch (createError) {
       setOrgSetupError(
         extractErrorMessage(createError, "Falha ao criar empresa"),
       );
+      return false;
     } finally {
       setOrgSetupBusy(false);
     }
@@ -3133,15 +3150,18 @@ export function App() {
     }
   }
 
-  async function handleCreateOrgProject() {
+  async function handleCreateOrgProject(
+    name: string,
+    description: string,
+  ): Promise<boolean> {
     if (!orgSetupSelectedId) {
-      return;
+      return false;
     }
 
-    const trimmedName = newOrgProjectName.trim();
+    const trimmedName = name.trim();
     if (!trimmedName) {
       setOrgSetupError("Informe o nome do projeto.");
-      return;
+      return false;
     }
 
     try {
@@ -3150,15 +3170,15 @@ export function App() {
       await invoke("create_project", {
         organizationId: orgSetupSelectedId,
         name: trimmedName,
-        description: newOrgProjectDescription.trim() || null,
+        description: description.trim() || null,
       });
       await reloadProjects();
-      setNewOrgProjectName("");
-      setNewOrgProjectDescription("");
+      return true;
     } catch (createError) {
       setOrgSetupError(
         extractErrorMessage(createError, "Falha ao criar projeto"),
       );
+      return false;
     } finally {
       setOrgSetupBusy(false);
     }
@@ -3215,9 +3235,6 @@ export function App() {
           }
           if (orgIdentityRepoId === repository.id) {
             setOrgIdentityRepoId(null);
-          }
-          if (reassignRepoId === repository.id) {
-            setReassignRepoId("");
           }
 
           setOrgSetupSuccess(`Repositorio "${repository.name}" excluido.`);
@@ -3283,16 +3300,16 @@ export function App() {
     });
   }
 
-  async function handleOrgLinkRepository() {
+  async function handleOrgLinkRepository(): Promise<boolean> {
     if (!orgSetupSelectedId) {
-      return;
+      return false;
     }
 
     const trimmedName = orgLinkRepoName.trim();
     const trimmedPath = orgLinkRepoPath.trim();
     if (!trimmedName || !trimmedPath) {
       setOrgSetupError("Informe nome e pasta local do repositorio.");
-      return;
+      return false;
     }
 
     try {
@@ -3313,35 +3330,40 @@ export function App() {
       setOrgLinkRepoRemote("");
       setOrgLinkProjectId("");
       setOrgLinkInspection(null);
+      return true;
     } catch (linkError) {
       setOrgSetupError(
         extractErrorMessage(linkError, "Falha ao vincular repositorio"),
       );
+      return false;
     } finally {
       setOrgSetupBusy(false);
     }
   }
 
-  async function handleReassignRepository() {
-    if (!orgSetupSelectedId || !reassignRepoId) {
-      return;
+  async function handleReassignRepository(
+    repositoryId: string,
+    projectId: string,
+  ): Promise<boolean> {
+    if (!orgSetupSelectedId || !repositoryId) {
+      return false;
     }
 
     try {
       setOrgSetupBusy(true);
       setOrgSetupError(null);
       await invoke("update_repository_context", {
-        repositoryId: reassignRepoId,
+        repositoryId,
         organizationId: orgSetupSelectedId,
-        projectId: reassignProjectId.trim() || null,
+        projectId: projectId.trim() || null,
       });
       await reloadRepositories();
-      setReassignRepoId("");
-      setReassignProjectId("");
+      return true;
     } catch (reassignError) {
       setOrgSetupError(
         extractErrorMessage(reassignError, "Falha ao reassociar repositorio"),
       );
+      return false;
     } finally {
       setOrgSetupBusy(false);
     }
@@ -3995,16 +4017,16 @@ export function App() {
     }
   }
 
-  async function handleSavePmProjectMapping() {
-    if (
-      !orgSetupSelectedId ||
-      !pmMappingDraft.externalProjectKey ||
-      !pmMappingDraft.projectId
-    ) {
+  async function handleSavePmProjectMapping(draft: {
+    externalProjectKey: string;
+    projectId: string;
+    defaultRepositoryId: string;
+  }): Promise<boolean> {
+    if (!orgSetupSelectedId || !draft.externalProjectKey || !draft.projectId) {
       setIntegrationMessage(
         "Selecione projeto Jira e projeto WCP para mapear.",
       );
-      return;
+      return false;
     }
 
     try {
@@ -4012,9 +4034,9 @@ export function App() {
       await invoke<PmProjectMappingDto>("save_pm_project_mapping", {
         organizationId: orgSetupSelectedId,
         integrationConnectionId: getPmConnection("jira")?.id ?? null,
-        externalProjectKey: pmMappingDraft.externalProjectKey,
-        projectId: pmMappingDraft.projectId,
-        defaultRepositoryId: pmMappingDraft.defaultRepositoryId || null,
+        externalProjectKey: draft.externalProjectKey,
+        projectId: draft.projectId,
+        defaultRepositoryId: draft.defaultRepositoryId || null,
       });
       const mappings = await invoke<PmProjectMappingDto[]>(
         "list_pm_project_mappings_command",
@@ -4022,10 +4044,12 @@ export function App() {
       );
       setPmProjectMappings(mappings);
       setIntegrationMessage("Mapeamento de projeto salvo.");
+      return true;
     } catch (mappingError) {
       setIntegrationMessage(
         extractErrorMessage(mappingError, "Falha ao salvar mapeamento"),
       );
+      return false;
     } finally {
       setIntegrationBusy(false);
     }
@@ -4078,7 +4102,6 @@ export function App() {
     setContextStep(2);
     setApplyResult(null);
     setHookResult(null);
-    setShowEditProjectPathForm(false);
     resetEditProjectPathForm(repository);
   }
 
@@ -4212,17 +4235,20 @@ export function App() {
     }
   }
 
-  async function handleSaveRepositoryNote() {
-    if (!selectedRepoId || !repoNoteTitle.trim() || !repoNoteContent.trim()) {
-      return;
+  async function handleSaveRepositoryNote(
+    title: string,
+    content: string,
+  ): Promise<boolean> {
+    if (!selectedRepoId || !title.trim() || !content.trim()) {
+      return false;
     }
 
     try {
       setContextBusy(true);
       const response = await invoke<SaveNoteResultDto>("save_repository_note", {
         repositoryId: selectedRepoId,
-        title: repoNoteTitle,
-        content: repoNoteContent,
+        title,
+        content,
         noteType: "pattern",
       });
 
@@ -4231,9 +4257,8 @@ export function App() {
           ? { ...current, notes: [response.note, ...current.notes] }
           : { repositoryId: selectedRepoId, notes: [response.note] },
       );
-      setRepoNoteTitle("");
-      setRepoNoteContent("");
       await refreshHistoryIfNeeded();
+      return true;
     } catch (contextError) {
       setRepoError(
         extractErrorMessage(
@@ -4241,6 +4266,7 @@ export function App() {
           "Falha ao salvar memoria do repositorio",
         ),
       );
+      return false;
     } finally {
       setContextBusy(false);
     }
@@ -4359,17 +4385,20 @@ export function App() {
     return "Abrir tarefa";
   }
 
-  async function handleSaveTaskNote() {
-    if (!selectedTaskId || !noteTitle.trim() || !noteContent.trim()) {
-      return;
+  async function handleSaveTaskNote(
+    title: string,
+    content: string,
+  ): Promise<boolean> {
+    if (!selectedTaskId || !title.trim() || !content.trim()) {
+      return false;
     }
 
     try {
       setContextBusy(true);
       const response = await invoke<SaveNoteResultDto>("save_task_note", {
         workItemId: selectedTaskId,
-        title: noteTitle,
-        content: noteContent,
+        title,
+        content,
         noteType: "decision",
       });
 
@@ -4389,23 +4418,26 @@ export function App() {
             }
           : current,
       );
-      setNoteTitle("");
-      setNoteContent("");
       offerResumeSuggestion(
         selectedTaskId,
-        `${noteTitle.trim()}: ${noteContent.trim()}`,
+        `${title.trim()}: ${content.trim()}`,
       );
       await refreshHistoryIfNeeded();
+      return true;
     } catch (contextError) {
       setError(extractErrorMessage(contextError, "Falha ao salvar nota"));
+      return false;
     } finally {
       setContextBusy(false);
     }
   }
 
-  async function handleAttachArtifact() {
-    if (!selectedTaskId || !artifactUrl.trim()) {
-      return;
+  async function handleAttachArtifact(
+    title: string,
+    url: string,
+  ): Promise<boolean> {
+    if (!selectedTaskId || !url.trim()) {
+      return false;
     }
 
     try {
@@ -4416,8 +4448,8 @@ export function App() {
           workItemId: selectedTaskId,
           repositoryId: selectedRepoId,
           artifactType: "link",
-          title: artifactTitle || null,
-          url: artifactUrl,
+          title: title || null,
+          url,
         },
       );
 
@@ -4437,11 +4469,11 @@ export function App() {
             }
           : current,
       );
-      setArtifactTitle("");
-      setArtifactUrl("");
       await refreshHistoryIfNeeded();
+      return true;
     } catch (contextError) {
       setError(extractErrorMessage(contextError, "Falha ao anexar artefato"));
+      return false;
     } finally {
       setContextBusy(false);
     }
@@ -4468,27 +4500,87 @@ export function App() {
     }
   }
 
+  function normalizeTaskFormDraft(draft: TaskFormDraft): TaskFormDraft {
+    return {
+      title: draft.title.trim(),
+      description: draft.description.trim(),
+      status: draft.status,
+      priority: draft.priority,
+      organizationId: draft.organizationId.trim(),
+      projectId: draft.projectId.trim(),
+      primaryRepositoryId: draft.primaryRepositoryId.trim(),
+      blockedReason: draft.blockedReason.trim(),
+      resumeSummary: draft.resumeSummary.trim(),
+    };
+  }
+
+  function areTaskFormDraftsEqual(a: TaskFormDraft, b: TaskFormDraft): boolean {
+    const left = normalizeTaskFormDraft(a);
+    const right = normalizeTaskFormDraft(b);
+    return (
+      left.title === right.title &&
+      left.description === right.description &&
+      left.status === right.status &&
+      left.priority === right.priority &&
+      left.organizationId === right.organizationId &&
+      left.projectId === right.projectId &&
+      left.primaryRepositoryId === right.primaryRepositoryId &&
+      left.blockedReason === right.blockedReason &&
+      left.resumeSummary === right.resumeSummary
+    );
+  }
+
   function isTaskFormDirty(): boolean {
     if (!taskFormMode) {
       return false;
     }
     if (taskFormMode === "create") {
-      return (
-        JSON.stringify(taskFormDraft) !== JSON.stringify(emptyTaskFormDraft())
-      );
+      return !areTaskFormDraftsEqual(taskFormDraft, emptyTaskFormDraft());
     }
-    return (
-      taskFormBaseline !== null &&
-      JSON.stringify(taskFormDraft) !== JSON.stringify(taskFormBaseline)
-    );
+    if (!taskFormBaseline) {
+      return false;
+    }
+    return !areTaskFormDraftsEqual(taskFormDraft, taskFormBaseline);
+  }
+
+  function finishTaskDetailDialogClose() {
+    setTaskFormBaseline(null);
+    setTaskDetailDialogOpen(false);
+    setTaskFormMode(null);
+    setTaskFormError(null);
+    setTaskActionsMenuOpen(false);
+  }
+
+  function attemptCloseTaskDetailDialog() {
+    if (!isTaskFormDirty()) {
+      finishTaskDetailDialogClose();
+      return;
+    }
+
+    setConfirmDialog({
+      title: "Descartar alteracoes?",
+      description: "As alteracoes nao salvas nesta tarefa serao perdidas.",
+      confirmLabel: "Descartar",
+      destructive: true,
+      onConfirm: () => {
+        finishTaskDetailDialogClose();
+      },
+    });
   }
 
   function requestTaskFormClose(onClose: () => void) {
     if (isTaskFormDirty()) {
-      const confirmed = window.confirm("Descartar alteracoes nao salvas?");
-      if (!confirmed) {
-        return;
-      }
+      setConfirmDialog({
+        title: "Descartar alteracoes?",
+        description: "As alteracoes nao salvas nesta tarefa serao perdidas.",
+        confirmLabel: "Descartar",
+        destructive: true,
+        onConfirm: () => {
+          setTaskFormBaseline(null);
+          onClose();
+        },
+      });
+      return;
     }
     setTaskFormBaseline(null);
     onClose();
@@ -4501,26 +4593,54 @@ export function App() {
       setTaskFormDraft(draft);
       setTaskFormBaseline(draft);
       setTaskFormMode("create");
+      setTaskDetailDialogOpen(true);
     });
   }
 
   function openEditTaskForm(patch?: Partial<TaskFormDraft>) {
-    if (!currentTask) {
-      return;
-    }
+    requestTaskFormClose(() => {
+      if (!currentTask) {
+        return;
+      }
 
-    setTaskFormError(null);
-    const draft = { ...taskToFormDraft(currentTask), ...patch };
-    setTaskFormDraft(draft);
-    setTaskFormBaseline(draft);
-    setTaskFormMode("edit");
+      setTaskActionsMenuOpen(false);
+      setTaskFormError(null);
+      const draft = { ...taskToFormDraft(currentTask), ...patch };
+      setTaskFormDraft(draft);
+      setTaskFormBaseline(draft);
+      setTaskFormMode("edit");
+    });
   }
 
   function closeTaskForm() {
-    requestTaskFormClose(() => {
+    if (!taskFormMode) {
+      return;
+    }
+
+    if (!isTaskFormDirty()) {
+      setTaskFormBaseline(null);
       setTaskFormMode(null);
       setTaskFormError(null);
+      setTaskActionsMenuOpen(false);
+      return;
+    }
+
+    setConfirmDialog({
+      title: "Descartar alteracoes?",
+      description: "As alteracoes nao salvas nesta tarefa serao perdidas.",
+      confirmLabel: "Descartar",
+      destructive: true,
+      onConfirm: () => {
+        setTaskFormBaseline(null);
+        setTaskFormMode(null);
+        setTaskFormError(null);
+        setTaskActionsMenuOpen(false);
+      },
     });
+  }
+
+  function closeTaskDetailDialog() {
+    attemptCloseTaskDetailDialog();
   }
 
   function selectTaskId(taskId: string) {
@@ -4528,11 +4648,13 @@ export function App() {
       setTaskFormMode(null);
       setTaskFormError(null);
       setSelectedTaskId(taskId);
+      setTaskDetailDialogOpen(true);
     });
   }
 
   function switchActiveView(view: DesktopView) {
     requestTaskFormClose(() => {
+      setTaskDetailDialogOpen(false);
       setTaskFormMode(null);
       setTaskFormError(null);
       if (view === "repos") {
@@ -4773,20 +4895,22 @@ export function App() {
     setTaskFormError(null);
   }
 
-  async function handleCreateDependency() {
-    if (!selectedTaskId || !dependencyTargetId) {
-      return;
+  async function handleCreateDependency(
+    relation: "depends_on" | "blocks",
+    targetId: string,
+  ): Promise<boolean> {
+    if (!selectedTaskId || !targetId) {
+      return false;
     }
 
-    if (dependencyTargetId === selectedTaskId) {
+    if (targetId === selectedTaskId) {
       setDependencyError("Origem e destino devem ser tarefas diferentes.");
-      return;
+      return false;
     }
 
     const fromWorkItemId =
-      dependencyRelation === "depends_on" ? selectedTaskId : dependencyTargetId;
-    const toWorkItemId =
-      dependencyRelation === "depends_on" ? dependencyTargetId : selectedTaskId;
+      relation === "depends_on" ? selectedTaskId : targetId;
+    const toWorkItemId = relation === "depends_on" ? targetId : selectedTaskId;
 
     try {
       setDependencyBusy(true);
@@ -4802,13 +4926,14 @@ export function App() {
       );
 
       setTaskContext(response);
-      setDependencyTargetId("");
       setDependencyError(null);
       await refreshHistoryIfNeeded();
+      return true;
     } catch (contextError) {
       setDependencyError(
         extractErrorMessage(contextError, "Falha ao criar dependencia"),
       );
+      return false;
     } finally {
       setDependencyBusy(false);
     }
@@ -4862,39 +4987,23 @@ export function App() {
 
   if (loading) {
     return (
-      <main className="shell mx-auto px-6 py-8 pb-20">
-        <header className="mb-7 border-b border-border pb-5">
-          <div className="grid gap-1">
-            <span className="text-2xl font-semibold tracking-tight text-foreground">
-              Contexto
-            </span>
-            <span className="text-sm text-muted-foreground">
-              Seu assistente de trabalho
-            </span>
-          </div>
-        </header>
+      <AppShell
+        sidebar={<AppSidebar value="today" onChange={() => undefined} />}
+      >
         <Card>
           <CardContent className="py-8">
             <p className="text-muted-foreground">Carregando seu dia...</p>
           </CardContent>
         </Card>
-      </main>
+      </AppShell>
     );
   }
 
   if (error || !data) {
     return (
-      <main className="shell mx-auto px-6 py-8 pb-20">
-        <header className="mb-7 border-b border-border pb-5">
-          <div className="grid gap-1">
-            <span className="text-2xl font-semibold tracking-tight text-foreground">
-              Contexto
-            </span>
-            <span className="text-sm text-muted-foreground">
-              Seu assistente de trabalho
-            </span>
-          </div>
-        </header>
+      <AppShell
+        sidebar={<AppSidebar value="today" onChange={() => undefined} />}
+      >
         <Card className="border-destructive/40 bg-destructive/10">
           <CardContent className="py-8">
             <h2 className="text-lg font-semibold">Nao foi possivel carregar</h2>
@@ -4903,7 +5012,7 @@ export function App() {
             </p>
           </CardContent>
         </Card>
-      </main>
+      </AppShell>
     );
   }
 
@@ -4918,307 +5027,381 @@ export function App() {
             ? "Historico"
             : "Projetos";
 
+  const sidebarOrganization =
+    organizations.find((org) => org.id === orgSetupSelectedId) ??
+    organizations.find((org) => org.id === headerFocusTask?.organizationId) ??
+    organizations[0] ??
+    null;
+
+  const topBarSearchGroups = groupedSearchResults.map((group) => ({
+    ...group,
+    items: group.items.map((item) => ({
+      id: item.id,
+      kind: item.kind,
+      title: item.title,
+      detail: item.detail,
+      createdAt: item.createdAt,
+      meta: `${normalizeSearchLabel(item.kind)}${
+        item.createdAt ? ` · ${formatDateTime(item.createdAt)}` : ""
+      }`,
+    })),
+  }));
+
   return (
     <>
-      <main className="shell mx-auto px-6 py-8 pb-20">
-        <header className="appHeader mb-7 border-b border-border pb-5">
-          <div className="appHeaderTop mb-4 flex flex-wrap items-start justify-between gap-4">
-            <div className="appBrand grid gap-1">
-              <span className="appName text-2xl font-semibold tracking-tight text-foreground">
-                Contexto
-              </span>
-              <span className="appTagline text-sm text-muted-foreground">
-                Seu assistente de trabalho
-              </span>
-            </div>
-            {headerFocusTask ? (
-              <Card className="max-w-sm border-primary/30 bg-card/80 shadow-glow">
-                <CardContent className="grid gap-2 p-4">
-                  <Badge
-                    variant="secondary"
-                    className="w-fit text-[11px] uppercase tracking-wide"
+      <AppShell
+        sidebar={
+          <AppSidebar
+            value={activeView}
+            onChange={(view) => switchActiveView(view)}
+            organizationName={sidebarOrganization?.name}
+            organizationKind={sidebarOrganization?.kind}
+            organizationLogoUrl={
+              sidebarOrganization
+                ? getOrganizationLogoUrl(sidebarOrganization.id)
+                : null
+            }
+            onOrganizationClick={
+              sidebarOrganization
+                ? () => {
+                    setOrgSetupSelectedId(sidebarOrganization.id);
+                    switchActiveView("organizations");
+                  }
+                : undefined
+            }
+          />
+        }
+        topBar={
+          <AppTopBar
+            searchQuery={searchQuery}
+            onSearchQueryChange={setSearchQuery}
+            searchOpen={searchOpen}
+            searchBusy={searchBusy}
+            groupedSearchResults={topBarSearchGroups}
+            onSearchResultClick={(item) =>
+              handleSearchResultClick(item as SearchResultDto)
+            }
+            onOpenHistory={openGlobalSearchInHistory}
+            onClearSearch={() => {
+              setSearchQuery("");
+              setSearchOpen(false);
+            }}
+            focusTitle={headerFocusTask?.title}
+            focusActive={Boolean(data?.activeSession)}
+            onFocusContextClick={
+              headerFocusTask?.primaryRepositoryId
+                ? () =>
+                    openContextForRepository(
+                      headerFocusTask.primaryRepositoryId!,
+                      headerFocusTask.organizationId,
+                    )
+                : undefined
+            }
+          />
+        }
+      >
+        <ViewHeader title={pageTitle} hint={VIEW_PAGE_HINT[activeView]} />
+
+        {activeView === "today" ? (
+          <TodayView>
+            <>
+              <Card className="today-hero panel border-primary/20 bg-card/90">
+                <CardContent className="grid gap-5 p-6">
+                  {todayDayBrief ? (
+                    <section className="daySummary" aria-label="Resumo do dia">
+                      <p className="dayBriefLine dayBriefLine-muted">
+                        {todayDayBrief.line1}
+                      </p>
+                      <p className="dayBriefLine dayBriefLine-strong">
+                        {todayDayBrief.line2}
+                      </p>
+                    </section>
+                  ) : null}
+
+                  <section
+                    className={`nextActionPanel nextActionPanel-${data.todayFocus.focusKind}`}
+                    aria-label="Proxima acao"
                   >
-                    {data?.activeSession
-                      ? "Foco agora · sessao ativa"
-                      : "Foco agora"}
-                  </Badge>
-                  <strong className="text-sm leading-snug">
-                    {headerFocusTask.title}
-                  </strong>
-                  {headerFocusTask.primaryRepositoryId ? (
+                    <div className="todayContextChips">
+                      <Badge variant="secondary">{todayFocusKindLabel}</Badge>
+                      <Badge variant="outline">P{todayFocusPriority}</Badge>
+                      {data.todayFocus.primaryRepositoryName ? (
+                        <Badge variant="outline">
+                          {data.todayFocus.primaryRepositoryName}
+                        </Badge>
+                      ) : null}
+                    </div>
+
+                    {data.todayFocus.focusKind === "unblock" &&
+                    data.todayFocus.blockerLabel ? (
+                      <StatusAlert
+                        status="warning"
+                        title="Bloqueio"
+                        className="nextActionAlert"
+                      >
+                        {data.todayFocus.blockerLabel}
+                      </StatusAlert>
+                    ) : null}
+
+                    {data.todayFocus.focusKind === "unblock" &&
+                    data.todayFocus.dependencyLabel ? (
+                      <StatusAlert
+                        status="warning"
+                        title="Dependencia"
+                        className="nextActionAlert"
+                      >
+                        {data.todayFocus.dependencyLabel}
+                      </StatusAlert>
+                    ) : null}
+
+                    <div className="nextActionHeader">
+                      <span className="nextActionEyebrow">Proxima acao</span>
+                      <h2 className="nextActionStep">
+                        {data.todayFocus.nextStep}
+                      </h2>
+                      {data.todayFocus.headline &&
+                      data.todayFocus.headline !== data.todayFocus.nextStep ? (
+                        <p className="nextActionHeadline muted">
+                          {data.todayFocus.headline}
+                        </p>
+                      ) : null}
+                    </div>
+
+                    {data.todayFocus.focusKind !== "unblock" &&
+                    data.todayFocus.blockerLabel ? (
+                      <StatusAlert
+                        status="warning"
+                        title="Bloqueio"
+                        className="nextActionAlert"
+                      >
+                        {data.todayFocus.blockerLabel}
+                      </StatusAlert>
+                    ) : null}
+
+                    {data.todayFocus.focusKind !== "unblock" &&
+                    data.todayFocus.dependencyLabel ? (
+                      <StatusAlert
+                        status="warning"
+                        title="Dependencia"
+                        className="nextActionAlert"
+                      >
+                        {data.todayFocus.dependencyLabel}
+                      </StatusAlert>
+                    ) : null}
+
+                    {data.todayFocus.resumeHint ? (
+                      <p className="nextActionResume muted">
+                        Retomada: {data.todayFocus.resumeHint}
+                      </p>
+                    ) : null}
+
+                    <div className="actionRow">
+                      <Button type="button" onClick={handleNextActionPrimary}>
+                        {getNextActionPrimaryLabel()}
+                      </Button>
+                      {data.todayFocus.primaryRepositoryId ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() =>
+                            openContextForRepository(
+                              data.todayFocus.primaryRepositoryId!,
+                              data.currentTask?.organizationId,
+                            )
+                          }
+                        >
+                          Ir para{" "}
+                          {data.todayFocus.primaryRepositoryName ?? "projeto"}
+                        </Button>
+                      ) : null}
+                    </div>
+                  </section>
+
+                  {todayStatusChips.length > 0 ? (
+                    <div
+                      className="todayContextChips todayStatusChips"
+                      aria-label="Sinais do dia"
+                    >
+                      {todayStatusChips.map((chip) => (
+                        <Badge key={chip} variant="outline">
+                          {chip}
+                        </Badge>
+                      ))}
+                    </div>
+                  ) : null}
+
+                  <div className="dayMetrics">
+                    <article className="dayMetric">
+                      <span>Prontas para fazer</span>
+                      <strong>{data.summary.executableCount}</strong>
+                    </article>
+                    <article className="dayMetric">
+                      <span>Em andamento</span>
+                      <strong>{data.summary.doingCount}</strong>
+                    </article>
+                    <article className="dayMetric">
+                      <span>Bloqueadas</span>
+                      <strong>{data.summary.blockedCount}</strong>
+                    </article>
+                  </div>
+
+                  <div className="quickLinks">
                     <Button
                       type="button"
                       variant="outline"
-                      size="sm"
-                      className="w-fit"
-                      onClick={() =>
-                        openContextForRepository(
-                          headerFocusTask.primaryRepositoryId!,
-                          headerFocusTask.organizationId,
-                        )
-                      }
+                      onClick={() => void handleCommitTodayPlan()}
                     >
-                      <GitBranch className="h-4 w-4" aria-hidden />
-                      Ir para contexto
+                      Montar meu dia
                     </Button>
-                  ) : null}
-                </CardContent>
-              </Card>
-            ) : null}
-          </div>
-
-          <section className="globalSearch relative">
-            <SearchField
-              type="search"
-              className="h-11 rounded-2xl bg-background/80"
-              placeholder="Buscar em tarefas, notas, sessoes e projetos..."
-              value={searchQuery}
-              onChange={(event) => setSearchQuery(event.target.value)}
-              aria-label="Busca global no historico local"
-            />
-            {searchOpen ? (
-              <div
-                className="searchResultsPanel"
-                role="listbox"
-                aria-label="Resultados da busca"
-              >
-                {searchBusy ? (
-                  <p className="searchResultsStatus">Buscando...</p>
-                ) : null}
-                {!searchBusy && groupedSearchResults.length === 0 ? (
-                  <p className="searchResultsStatus">
-                    Nenhum resultado para &quot;{searchQuery.trim()}&quot;
-                  </p>
-                ) : null}
-                {searchQuery.trim().length >= 2 ? (
-                  <div className="searchResultsFooter">
                     <Button
                       type="button"
-                      variant="secondary"
-                      className="searchOpenHistoryButton w-full"
-                      onClick={openGlobalSearchInHistory}
+                      variant="outline"
+                      onClick={() => setActiveView("backlog")}
                     >
-                      <History className="h-4 w-4" aria-hidden />
-                      Ver tudo no Historico
+                      Ver tarefas
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => setActiveView("repos")}
+                    >
+                      Ver projetos
                     </Button>
                   </div>
-                ) : null}
-                {groupedSearchResults.map((group) => {
-                  const GroupIcon = getSearchKindIcon(group.kind);
 
-                  return (
-                    <div key={group.kind} className="searchGroup">
-                      <h3 className="searchGroupTitle inline-flex items-center gap-2">
-                        <GroupIcon
-                          className="h-4 w-4 text-muted-foreground"
-                          aria-hidden
-                        />
-                        {group.label}
-                      </h3>
-                      {group.items.map((item) => (
-                        <SearchResultButton
-                          key={`${item.kind}-${item.id}`}
-                          kind={item.kind}
-                          onClick={() => handleSearchResultClick(item)}
-                          title={item.title}
-                          detail={
-                            item.detail
-                              ? truncateSearchDetail(item.detail)
-                              : undefined
-                          }
-                          meta={`${normalizeSearchLabel(item.kind)}${
-                            item.createdAt
-                              ? ` · ${formatDateTime(item.createdAt)}`
-                              : ""
-                          }`}
-                        />
-                      ))}
-                    </div>
-                  );
-                })}
-              </div>
-            ) : null}
-          </section>
-
-          <div className="mt-4" aria-label="Navegacao principal">
-            <MainViewTabs
-              value={activeView}
-              onValueChange={(view) => switchActiveView(view)}
-            />
-          </div>
-        </header>
-
-        <PageHeader
-          view={activeView}
-          title={pageTitle}
-          hint={VIEW_PAGE_HINT[activeView]}
-        />
-
-        {activeView === "today" ? (
-          <>
-            <section className="panel">
-              <div className="dayOverview">
-                {todayDayBrief ? (
-                  <section className="daySummary" aria-label="Resumo do dia">
-                    <p className="dayBriefLine dayBriefLine-muted">
-                      {todayDayBrief.line1}
-                    </p>
-                    <p className="dayBriefLine dayBriefLine-strong">
-                      {todayDayBrief.line2}
-                    </p>
-                  </section>
-                ) : null}
-
-                <section
-                  className={`nextActionPanel nextActionPanel-${data.todayFocus.focusKind}`}
-                  aria-label="Proxima acao"
-                >
-                  {data.activeSession ? (
-                    <div className="sessionDominantBar">
-                      <StatusBadge variant="live">Em foco</StatusBadge>
-                      <span>
-                        {data.todayFocus.sessionGoal?.trim() ||
-                          data.activeSession.goal?.trim() ||
-                          data.todayFocus.headline}
-                      </span>
-                      <span className="sessionDominantMeta muted">
-                        {formatDateTime(data.activeSession.startedAt)}
-                        {data.activeSession.branchName
-                          ? ` · ${data.activeSession.branchName}`
-                          : ""}
-                      </span>
-                    </div>
-                  ) : null}
-
-                  <div className="todayContextChips">
-                    <Badge variant="secondary">{todayFocusKindLabel}</Badge>
-                    <Badge variant="outline">P{todayFocusPriority}</Badge>
-                    {data.todayFocus.primaryRepositoryName ? (
-                      <Badge variant="outline">
-                        {data.todayFocus.primaryRepositoryName}
-                      </Badge>
-                    ) : null}
-                  </div>
-
-                  {data.todayFocus.focusKind === "unblock" &&
-                  data.todayFocus.blockerLabel ? (
-                    <StatusAlert
-                      status="warning"
-                      title="Bloqueio"
-                      className="nextActionAlert"
-                    >
-                      {data.todayFocus.blockerLabel}
-                    </StatusAlert>
-                  ) : null}
-
-                  {data.todayFocus.focusKind === "unblock" &&
-                  data.todayFocus.dependencyLabel ? (
-                    <StatusAlert
-                      status="warning"
-                      title="Dependencia"
-                      className="nextActionAlert"
-                    >
-                      {data.todayFocus.dependencyLabel}
-                    </StatusAlert>
-                  ) : null}
-
-                  <div className="nextActionHeader">
-                    <span className="nextActionEyebrow">Proxima acao</span>
-                    <h2 className="nextActionStep">
-                      {data.todayFocus.nextStep}
-                    </h2>
-                    {data.todayFocus.headline &&
-                    data.todayFocus.headline !== data.todayFocus.nextStep ? (
-                      <p className="nextActionHeadline muted">
-                        {data.todayFocus.headline}
-                      </p>
-                    ) : null}
-                  </div>
-
-                  {data.todayFocus.focusKind !== "unblock" &&
-                  data.todayFocus.blockerLabel ? (
-                    <StatusAlert
-                      status="warning"
-                      title="Bloqueio"
-                      className="nextActionAlert"
-                    >
-                      {data.todayFocus.blockerLabel}
-                    </StatusAlert>
-                  ) : null}
-
-                  {data.todayFocus.focusKind !== "unblock" &&
-                  data.todayFocus.dependencyLabel ? (
-                    <StatusAlert
-                      status="warning"
-                      title="Dependencia"
-                      className="nextActionAlert"
-                    >
-                      {data.todayFocus.dependencyLabel}
-                    </StatusAlert>
-                  ) : null}
-
-                  {data.todayFocus.resumeHint ? (
-                    <p className="nextActionResume muted">
-                      Retomada: {data.todayFocus.resumeHint}
-                    </p>
-                  ) : null}
-
-                  <div className="actionRow">
-                    <Button type="button" onClick={handleNextActionPrimary}>
-                      {getNextActionPrimaryLabel()}
-                    </Button>
-                    {data.todayFocus.primaryRepositoryId ? (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={() =>
-                          openContextForRepository(
-                            data.todayFocus.primaryRepositoryId!,
-                            data.currentTask?.organizationId,
-                          )
-                        }
-                      >
-                        Ir para{" "}
-                        {data.todayFocus.primaryRepositoryName ?? "projeto"}
-                      </Button>
-                    ) : null}
-                  </div>
-                </section>
-
-                {todayStatusChips.length > 0 ? (
-                  <div
-                    className="todayContextChips todayStatusChips"
-                    aria-label="Sinais do dia"
+                  <section
+                    ref={sessionPanelRef}
+                    className="sessionPanel border-t border-border pt-5"
                   >
-                    {todayStatusChips.map((chip) => (
-                      <Badge key={chip} variant="outline">
-                        {chip}
-                      </Badge>
-                    ))}
-                  </div>
-                ) : null}
+                    <div className="sessionHeader">
+                      <div className="panelHeading">
+                        <h2 className="text-lg font-semibold">Foco agora</h2>
+                        <p className="muted">
+                          {data.activeSession
+                            ? "Registre o resultado da sessao abaixo."
+                            : "Registre o que pretende fazer neste bloco de trabalho."}
+                        </p>
+                      </div>
+                      <StatusBadge
+                        variant={data.activeSession ? "live" : "idle"}
+                      >
+                        {data.activeSession ? "Em foco" : "Parado"}
+                      </StatusBadge>
+                    </div>
 
-                <div className="dayMetrics">
-                  <article className="dayMetric">
-                    <span>Prontas para fazer</span>
-                    <strong>{data.summary.executableCount}</strong>
-                  </article>
-                  <article className="dayMetric">
-                    <span>Em andamento</span>
-                    <strong>{data.summary.doingCount}</strong>
-                  </article>
-                  <article className="dayMetric">
-                    <span>Bloqueadas</span>
-                    <strong>{data.summary.blockedCount}</strong>
-                  </article>
-                </div>
+                    {!data.activeSession ? (
+                      <div className="sessionForm">
+                        <SessionFieldTextarea
+                          label="O que voce vai fazer?"
+                          value={sessionGoal}
+                          onChange={(event) =>
+                            setSessionGoal(event.target.value)
+                          }
+                          placeholder="Ex.: corrigir o bug do login antes do deploy"
+                        />
+                        <div className="actionRow">
+                          <Button
+                            type="button"
+                            onClick={handleStartSession}
+                            disabled={sessionBusy || !selectedTaskId}
+                          >
+                            {sessionBusy ? "Iniciando..." : "Comecar foco"}
+                          </Button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="sessionForm">
+                        <SessionFieldTextarea
+                          label="O que saiu disso?"
+                          value={sessionResult}
+                          onChange={(event) =>
+                            setSessionResult(event.target.value)
+                          }
+                          placeholder="Ex.: bug corrigido e testado localmente"
+                        />
+                        <SessionFieldTextarea
+                          label="Decisoes importantes"
+                          value={sessionDecisions}
+                          onChange={(event) =>
+                            setSessionDecisions(event.target.value)
+                          }
+                          placeholder="Ex.: manter a validacao no backend por enquanto"
+                        />
+                        <div className="actionRow">
+                          <Button
+                            type="button"
+                            onClick={handleEndSession}
+                            disabled={sessionBusy}
+                          >
+                            {sessionBusy ? "Encerrando..." : "Encerrar foco"}
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                  </section>
+                </CardContent>
+              </Card>
+
+              <div className="today-grid mt-5 grid gap-5 lg:grid-cols-2">
+                {data.todayPlan.length > 0 ? (
+                  <section className="panel">
+                    <div className="panelHeading">
+                      <h2>Plano do dia</h2>
+                      <p className="muted">
+                        Sugestoes do que atacar em seguida.
+                      </p>
+                    </div>
+                    <ul className="taskList">
+                      {data.todayPlan.map((item) => {
+                        const workItem = planMap.get(item.workItemId);
+                        return (
+                          <li
+                            key={item.id}
+                            className={
+                              item.isCommitted
+                                ? "taskListItem-committed"
+                                : undefined
+                            }
+                          >
+                            <div>
+                              <strong>
+                                {item.position}. {workItem?.title}
+                              </strong>
+                              <PlanStatusBadge committed={item.isCommitted}>
+                                {item.isCommitted
+                                  ? "Comprometida hoje"
+                                  : "Sugestao"}
+                              </PlanStatusBadge>
+                            </div>
+                            <span>
+                              {formatTaskStatus(workItem?.status ?? "-")}
+                            </span>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </section>
+                ) : (
+                  <section className="panel softPanel">
+                    <div className="panelHeading">
+                      <h2>Plano do dia</h2>
+                      <p className="muted">
+                        Use &quot;Montar meu dia&quot; no hero para gerar
+                        sugestoes.
+                      </p>
+                    </div>
+                  </section>
+                )}
 
                 {deadlineAlerts && deadlineAlerts.items.length > 0 ? (
                   <section
-                    className="integrationDeadlines"
+                    className="panel integrationDeadlines"
                     aria-label="Prazos das integracoes"
                   >
-                    <h3 className="subheading">Prazos das integracoes</h3>
+                    <div className="panelHeading">
+                      <h2>Prazos</h2>
+                      <p className="muted">Alertas das integracoes PM.</p>
+                    </div>
                     {groupedDeadlineAlerts.map((group) => (
                       <div
                         key={group.organizationId}
@@ -5263,1168 +5446,507 @@ export function App() {
                       </div>
                     ))}
                   </section>
-                ) : null}
-
-                <div className="quickLinks">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => void handleCommitTodayPlan()}
-                  >
-                    Montar meu dia
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => setActiveView("backlog")}
-                  >
-                    Ver tarefas
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => setActiveView("repos")}
-                  >
-                    Ver projetos
-                  </Button>
-                </div>
-              </div>
-            </section>
-
-            <section
-              ref={sessionPanelRef}
-              className="panel focusPanel sessionPanel"
-            >
-              <div className="sessionHeader">
-                <div className="panelHeading">
-                  <h2>Foco agora</h2>
-                  <p className="muted">
-                    {data.activeSession
-                      ? "Registre o resultado da sessao abaixo."
-                      : "Registre o que pretende fazer neste bloco de trabalho."}
-                  </p>
-                </div>
-                <StatusBadge variant={data.activeSession ? "live" : "idle"}>
-                  {data.activeSession ? "Em foco" : "Parado"}
-                </StatusBadge>
-              </div>
-
-              {!data.activeSession ? (
-                <div className="sessionForm">
-                  <label>
-                    O que voce vai fazer?
-                    <Textarea
-                      value={sessionGoal}
-                      onChange={(event) => setSessionGoal(event.target.value)}
-                      placeholder="Ex.: corrigir o bug do login antes do deploy"
-                    />
-                  </label>
-                  <div className="actionRow">
-                    <Button
-                      type="button"
-                      onClick={handleStartSession}
-                      disabled={sessionBusy || !selectedTaskId}
-                    >
-                      {sessionBusy ? "Iniciando..." : "Comecar foco"}
-                    </Button>
-                  </div>
-                </div>
-              ) : (
-                <div className="sessionForm">
-                  <label>
-                    O que saiu disso?
-                    <Textarea
-                      value={sessionResult}
-                      onChange={(event) => setSessionResult(event.target.value)}
-                      placeholder="Ex.: bug corrigido e testado localmente"
-                    />
-                  </label>
-                  <label>
-                    Decisoes importantes
-                    <Textarea
-                      value={sessionDecisions}
-                      onChange={(event) =>
-                        setSessionDecisions(event.target.value)
-                      }
-                      placeholder="Ex.: manter a validacao no backend por enquanto"
-                    />
-                  </label>
-                  <div className="actionRow">
-                    <Button
-                      type="button"
-                      onClick={handleEndSession}
-                      disabled={sessionBusy}
-                    >
-                      {sessionBusy ? "Encerrando..." : "Encerrar foco"}
-                    </Button>
-                  </div>
-                </div>
-              )}
-            </section>
-
-            {data.todayPlan.length > 0 ? (
-              <section className="panel">
-                <div className="panelHeading">
-                  <h2>Proximos passos</h2>
-                  <p className="muted">Sugestoes do que atacar em seguida.</p>
-                </div>
-                <ul className="taskList">
-                  {data.todayPlan.map((item) => {
-                    const workItem = planMap.get(item.workItemId);
-                    return (
-                      <li
-                        key={item.id}
-                        className={
-                          item.isCommitted
-                            ? "taskListItem-committed"
-                            : undefined
-                        }
-                      >
-                        <div>
-                          <strong>
-                            {item.position}. {workItem?.title}
-                          </strong>
-                          <PlanStatusBadge committed={item.isCommitted}>
-                            {item.isCommitted
-                              ? "Comprometida hoje"
-                              : "Sugestao"}
-                          </PlanStatusBadge>
-                        </div>
-                        <span>{formatTaskStatus(workItem?.status ?? "-")}</span>
-                      </li>
-                    );
-                  })}
-                </ul>
-              </section>
-            ) : null}
-
-            <section className="panel softPanel twoCol">
-              <div>
-                <div className="panelHeading">
-                  <h2>Para retomar depois</h2>
-                  <p className="muted">
-                    Tarefas relacionadas a{" "}
-                    <strong>
-                      {data.currentTask?.title ??
-                        currentTask?.title ??
-                        "sua selecao atual"}
-                    </strong>
-                    .
-                  </p>
-                </div>
-                <ul className="taskList">
-                  {todayRecoverableContext.length > 0 ? (
-                    todayRecoverableContext.map((candidate) => {
-                      const workItem = planMap.get(candidate.workItemId);
-                      return (
-                        <li key={candidate.workItemId}>
-                          <div>
-                            <strong>{workItem?.title}</strong>
-                            <span>{candidate.reasons.join(" · ")}</span>
-                          </div>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            onClick={() => {
-                              setSelectedTaskId(candidate.workItemId);
-                              setActiveView("backlog");
-                            }}
-                          >
-                            Abrir
-                          </Button>
-                        </li>
-                      );
-                    })
-                  ) : (
-                    <li>
-                      <div>
-                        <strong>Nada por aqui</strong>
-                        <span>
-                          Quando houver sugestoes, elas aparecem nesta lista.
-                        </span>
-                      </div>
-                    </li>
-                  )}
-                </ul>
-              </div>
-
-              <div>
-                <div className="panelHeading">
-                  <h2>Ambiente Git</h2>
-                  <p className="muted">
-                    Projeto:{" "}
-                    <strong>
-                      {data.todayFocus.primaryRepositoryName ??
-                        data.guardrail?.repositoryName ??
-                        "Nenhum configurado ainda"}
-                    </strong>
-                  </p>
-                </div>
-                {dashboardValidation ? (
-                  <>
-                    <StatusAlert
-                      status={dashboardValidation.status}
-                      title={formatValidationStatus(dashboardValidation.status)}
-                    >
-                      Conferencia rapida da identidade local
-                    </StatusAlert>
-                    <ul className="checkList">
-                      {dashboardValidation.checks.map((check) => (
-                        <li key={check.key}>
-                          <strong>{humanizeCheckKey(check.key)}</strong>
-                          <span>{formatValidationCheckDetail(check)}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </>
                 ) : (
-                  <StatusAlert status="warning" title="Ainda sem conferencia">
-                    Abra a aba Projetos para validar o ambiente Git deste repo.
-                  </StatusAlert>
+                  <section className="panel softPanel">
+                    <div className="panelHeading">
+                      <h2>Prazos</h2>
+                      <p className="muted">Nenhum prazo urgente no momento.</p>
+                    </div>
+                  </section>
                 )}
-                <div className="quickLinks">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => {
-                      if (data.guardrail?.repositoryId) {
-                        openContextForRepository(
-                          data.guardrail.repositoryId,
-                          data.currentTask?.organizationId,
+
+                <section className="panel softPanel">
+                  <div className="panelHeading">
+                    <h2>Para retomar depois</h2>
+                    <p className="muted">
+                      Tarefas relacionadas a{" "}
+                      <strong>
+                        {data.currentTask?.title ??
+                          currentTask?.title ??
+                          "sua selecao atual"}
+                      </strong>
+                      .
+                    </p>
+                  </div>
+                  <ul className="taskList">
+                    {todayRecoverableContext.length > 0 ? (
+                      todayRecoverableContext.map((candidate) => {
+                        const workItem = planMap.get(candidate.workItemId);
+                        return (
+                          <li key={candidate.workItemId}>
+                            <div>
+                              <strong>{workItem?.title}</strong>
+                              <span>{candidate.reasons.join(" · ")}</span>
+                            </div>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              onClick={() => {
+                                setSelectedTaskId(candidate.workItemId);
+                                setActiveView("backlog");
+                              }}
+                            >
+                              Abrir
+                            </Button>
+                          </li>
                         );
-                      } else {
-                        setActiveView("repos");
-                      }
-                    }}
-                  >
-                    <ArrowRightLeft className="h-4 w-4" aria-hidden />
-                    Abrir troca de contexto
-                  </Button>
-                </div>
+                      })
+                    ) : (
+                      <li>
+                        <div>
+                          <strong>Nada por aqui</strong>
+                          <span>
+                            Quando houver sugestoes, elas aparecem nesta lista.
+                          </span>
+                        </div>
+                      </li>
+                    )}
+                  </ul>
+                </section>
+
+                <section className="panel softPanel">
+                  <div className="panelHeading">
+                    <h2>Ambiente Git</h2>
+                    <p className="muted">
+                      Projeto:{" "}
+                      <strong>
+                        {data.todayFocus.primaryRepositoryName ??
+                          data.guardrail?.repositoryName ??
+                          "Nenhum configurado ainda"}
+                      </strong>
+                    </p>
+                  </div>
+                  {dashboardValidation ? (
+                    <>
+                      <StatusAlert
+                        status={dashboardValidation.status}
+                        title={formatValidationStatus(
+                          dashboardValidation.status,
+                        )}
+                      >
+                        Conferencia rapida da identidade local
+                      </StatusAlert>
+                      <ul className="checkList">
+                        {dashboardValidation.checks.map((check) => (
+                          <li key={check.key}>
+                            <strong>{humanizeCheckKey(check.key)}</strong>
+                            <span>{formatValidationCheckDetail(check)}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </>
+                  ) : (
+                    <StatusAlert status="warning" title="Ainda sem conferencia">
+                      Abra a aba Projetos para validar o ambiente Git deste
+                      repo.
+                    </StatusAlert>
+                  )}
+                  <div className="quickLinks">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => {
+                        if (data.guardrail?.repositoryId) {
+                          openContextForRepository(
+                            data.guardrail.repositoryId,
+                            data.currentTask?.organizationId,
+                          );
+                        } else {
+                          setActiveView("repos");
+                        }
+                      }}
+                    >
+                      <ArrowRightLeft className="h-4 w-4" aria-hidden />
+                      Abrir troca de contexto
+                    </Button>
+                  </div>
+                </section>
               </div>
-            </section>
-          </>
+            </>
+          </TodayView>
         ) : null}
 
         {activeView === "backlog" ? (
-          <section className="panel backlogPanel">
-            <div className="backlogLayout">
-              <aside className="backlogSidebar">
-                <div className="backlogSidebarHeader">
-                  <SectionTitle icon={ListTodo}>Suas tarefas</SectionTitle>
+          <BacklogView>
+            <div className="backlogListView grid gap-3">
+              <div className="backlogSidebarHeader">
+                <SectionTitle icon={ListTodo}>Suas tarefas</SectionTitle>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Popover
+                    open={backlogFiltersOpen}
+                    onOpenChange={setBacklogFiltersOpen}
+                    align="end"
+                    className="w-[min(320px,calc(100vw-3rem))]"
+                    trigger={
+                      <Button type="button" variant="outline" size="sm">
+                        Filtros
+                        {backlogActiveFilterCount > 0 ? (
+                          <Badge
+                            variant="secondary"
+                            className="ml-1 h-5 min-w-5 rounded-full px-1.5"
+                          >
+                            {backlogActiveFilterCount}
+                          </Badge>
+                        ) : null}
+                      </Button>
+                    }
+                  >
+                    <div className="backlogFilters grid gap-3">
+                      <FieldSelect
+                        id="backlog-source-filter"
+                        label="Origem"
+                        value={backlogSourceFilter}
+                        onValueChange={setBacklogSourceFilter}
+                        options={BACKLOG_SOURCE_FILTERS.map((filter) => ({
+                          value: filter.value,
+                          label: filter.label,
+                        }))}
+                      />
+                      <FieldSelect
+                        id="backlog-deadline-filter"
+                        label="Prazo"
+                        value={backlogDeadlineFilter}
+                        onValueChange={setBacklogDeadlineFilter}
+                        options={BACKLOG_DEADLINE_FILTERS.map((filter) => ({
+                          value: filter.value,
+                          label: filter.label,
+                        }))}
+                      />
+                      <FieldSelect
+                        id="backlog-status-filter"
+                        label="Status"
+                        value={backlogStatusFilter}
+                        onValueChange={setBacklogStatusFilter}
+                        options={BACKLOG_STATUS_FILTERS.map((filter) => ({
+                          value: filter.value,
+                          label: filter.label,
+                        }))}
+                      />
+                      <FieldSelect
+                        id="backlog-org-filter"
+                        label="Empresa"
+                        value={backlogOrgFilter}
+                        onValueChange={setBacklogOrgFilter}
+                        options={[
+                          { value: "all", label: "Todas" },
+                          ...organizations.map((organization) => ({
+                            value: organization.id,
+                            label: organization.name,
+                          })),
+                        ]}
+                      />
+                      <FieldSelect
+                        id="backlog-sort"
+                        label="Ordenar"
+                        value={backlogSort}
+                        onValueChange={(value) =>
+                          setBacklogSort(
+                            value as
+                              | "priority"
+                              | "scheduled_for"
+                              | "title"
+                              | "status",
+                          )
+                        }
+                        options={BACKLOG_SORT_OPTIONS.map((option) => ({
+                          value: option.value,
+                          label: option.label,
+                        }))}
+                      />
+                      <FieldCheckbox
+                        id="backlog-show-archived"
+                        label="Mostrar arquivadas"
+                        checked={showArchivedBacklog}
+                        onCheckedChange={setShowArchivedBacklog}
+                      />
+                      <FieldCheckbox
+                        id="backlog-show-dismissed"
+                        label="Mostrar ignoradas"
+                        checked={showDismissedBacklog}
+                        onCheckedChange={setShowDismissedBacklog}
+                      />
+                    </div>
+                  </Popover>
                   <Button type="button" size="sm" onClick={openCreateTaskForm}>
                     <Plus className="h-4 w-4" aria-hidden />
-                    Nova tarefa
+                    Nova
                   </Button>
                 </div>
+              </div>
 
-                <SearchField
-                  type="search"
-                  className="h-10"
-                  placeholder="Buscar tarefas..."
-                  value={backlogSearchQuery}
-                  onChange={(event) =>
-                    setBacklogSearchQuery(event.target.value)
-                  }
-                  aria-label="Buscar tarefas no backlog"
-                />
+              <SearchField
+                type="search"
+                className="h-10"
+                placeholder="Buscar tarefas..."
+                value={backlogSearchQuery}
+                onChange={(event) => setBacklogSearchQuery(event.target.value)}
+                aria-label="Buscar tarefas no backlog"
+              />
 
-                <div className="backlogFilters">
-                  <label className="grid gap-2 text-xs text-muted-foreground">
-                    <Label htmlFor="backlog-source-filter">Origem</Label>
-                    <select
-                      id="backlog-source-filter"
-                      value={backlogSourceFilter}
-                      onChange={(event) =>
-                        setBacklogSourceFilter(event.target.value)
-                      }
-                    >
-                      {BACKLOG_SOURCE_FILTERS.map((filter) => (
-                        <option key={filter.value} value={filter.value}>
-                          {filter.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="grid gap-2 text-xs text-muted-foreground">
-                    <Label htmlFor="backlog-deadline-filter">Prazo</Label>
-                    <select
-                      id="backlog-deadline-filter"
-                      value={backlogDeadlineFilter}
-                      onChange={(event) =>
-                        setBacklogDeadlineFilter(event.target.value)
-                      }
-                    >
-                      {BACKLOG_DEADLINE_FILTERS.map((filter) => (
-                        <option key={filter.value} value={filter.value}>
-                          {filter.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="grid gap-2 text-xs text-muted-foreground">
-                    <Label htmlFor="backlog-status-filter">Status</Label>
-                    <select
-                      id="backlog-status-filter"
-                      value={backlogStatusFilter}
-                      onChange={(event) =>
-                        setBacklogStatusFilter(event.target.value)
-                      }
-                    >
-                      {BACKLOG_STATUS_FILTERS.map((filter) => (
-                        <option key={filter.value} value={filter.value}>
-                          {filter.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="grid gap-2 text-xs text-muted-foreground">
-                    <Label htmlFor="backlog-org-filter">Empresa</Label>
-                    <select
-                      id="backlog-org-filter"
-                      value={backlogOrgFilter}
-                      onChange={(event) =>
-                        setBacklogOrgFilter(event.target.value)
-                      }
-                    >
-                      <option value="all">Todas</option>
-                      {organizations.map((organization) => (
-                        <option key={organization.id} value={organization.id}>
-                          {organization.name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="grid gap-2 text-xs text-muted-foreground">
-                    <Label htmlFor="backlog-sort">Ordenar</Label>
-                    <select
-                      id="backlog-sort"
-                      value={backlogSort}
-                      onChange={(event) =>
-                        setBacklogSort(
-                          event.target.value as
-                            | "priority"
-                            | "scheduled_for"
-                            | "title"
-                            | "status",
-                        )
-                      }
-                    >
-                      {BACKLOG_SORT_OPTIONS.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                </div>
-
-                <label className="backlogToggleArchived">
-                  <input
-                    type="checkbox"
-                    checked={showArchivedBacklog}
-                    onChange={(event) =>
-                      setShowArchivedBacklog(event.target.checked)
-                    }
-                  />
-                  Mostrar arquivadas
-                </label>
-
-                <label className="backlogToggleArchived">
-                  <input
-                    type="checkbox"
-                    checked={showDismissedBacklog}
-                    onChange={(event) =>
-                      setShowDismissedBacklog(event.target.checked)
-                    }
-                  />
-                  Mostrar ignoradas
-                </label>
-
+              <ScrollArea className="h-[min(75vh,820px)] pr-2">
                 <div className="repoList backlogList">
                   {filteredBacklog.length === 0 ? (
                     <p className="historyEmpty">Nenhuma tarefa neste filtro.</p>
                   ) : null}
                   {filteredBacklog.map((item) => (
-                    <SelectableListItem
+                    <TaskListItem
                       key={item.id}
+                      task={item}
                       active={selectedTaskId === item.id}
                       linked={relatedDependencyIds.has(item.id)}
+                      isRelated={relatedDependencyIds.has(item.id)}
+                      organizationName={
+                        item.organizationId
+                          ? organizationMap.get(item.organizationId)
+                          : null
+                      }
+                      organizationId={item.organizationId}
+                      organizationKind={
+                        item.organizationId
+                          ? findOrganizationById(item.organizationId)?.kind
+                          : null
+                      }
+                      organizationLogoUrl={
+                        item.organizationId
+                          ? getOrganizationLogoUrl(item.organizationId)
+                          : null
+                      }
                       onClick={() => selectTaskId(item.id)}
-                      title={item.title}
-                      subtitle={buildTaskPreviewLine(item)}
-                    >
-                      <Badge variant="outline">P{item.priority ?? 3}</Badge>
-                      {item.status === "blocked" ? (
-                        <StatusBadge variant="blocked">Bloqueada</StatusBadge>
-                      ) : null}
-                      {item.resumeSummary ? (
-                        <Badge variant="success">Retomada</Badge>
-                      ) : null}
-                      {item.status === "archived" ? (
-                        <Badge variant="secondary">Arquivada</Badge>
-                      ) : null}
-                      {item.wcpDismissedAt ? (
-                        <Badge variant="secondary">Ignorada</Badge>
-                      ) : null}
-                      {relatedDependencyIds.has(item.id) ? (
-                        <Badge variant="outline">Relacionada</Badge>
-                      ) : null}
-                      {item.sourceType === "imported" &&
-                      item.externalProvider ? (
-                        <Badge variant="outline">
-                          Importado ·{" "}
-                          {formatPmProviderLabel(item.externalProvider)}
-                          {item.externalKey ? ` · ${item.externalKey}` : ""}
-                        </Badge>
-                      ) : null}
-                      {item.organizationId ? (
-                        <Badge variant="secondary">
-                          {organizationMap.get(item.organizationId) ??
-                            "Empresa"}
-                        </Badge>
-                      ) : null}
-                      {item.scheduledFor ? (
-                        <Badge variant="outline">
-                          Prazo {formatDateTime(item.scheduledFor)}
-                        </Badge>
-                      ) : null}
-                      <span>{formatTaskStatus(item.status)}</span>
-                    </SelectableListItem>
+                      formatTaskStatus={formatTaskStatus}
+                      formatPmProviderLabel={formatPmProviderLabel}
+                      formatDateTime={formatDateTime}
+                    />
                   ))}
                 </div>
-              </aside>
+              </ScrollArea>
+            </div>
 
-              <div className="taskDetailPanel">
-                <div className="taskDetailHeader">
-                  <div className="panelHeading">
-                    <h2>
-                      {taskFormMode === "create"
-                        ? "Nova tarefa"
-                        : taskFormMode === "edit"
-                          ? "Editar tarefa"
-                          : (currentTask?.title ?? "Escolha uma tarefa")}
-                    </h2>
-                    <p className="muted">
-                      {taskFormMode
-                        ? "Preencha o essencial e salve para atualizar o backlog."
-                        : currentTask
-                          ? "Historico, notas e links desta tarefa."
-                          : "Selecione uma tarefa na lista ao lado."}
-                    </p>
-                  </div>
-                  {taskFormMode ? null : currentTask ? (
-                    <div className="taskDetailActions">
-                      <StatusBadge
-                        variant={
-                          currentTask.status === "blocked"
-                            ? "blocked"
-                            : currentTask.status === "doing"
-                              ? "live"
-                              : "idle"
-                        }
-                      >
-                        {formatTaskStatus(currentTask.status)}
-                      </StatusBadge>
-                      <Badge variant="outline">
-                        P{currentTask.priority ?? 3}
-                      </Badge>
-                      {currentTask.sourceType === "imported" &&
-                      currentTask.externalProvider ? (
-                        <Badge variant="outline">
-                          Importado ·{" "}
-                          {formatPmProviderLabel(currentTask.externalProvider)}
-                          {currentTask.externalKey
-                            ? ` · ${currentTask.externalKey}`
-                            : ""}
-                        </Badge>
-                      ) : null}
-                      {currentTask.externalUrl ? (
-                        <a
-                          className="externalTaskLink"
-                          href={currentTask.externalUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          Abrir no{" "}
-                          {formatPmProviderLabel(
-                            currentTask.externalProvider ?? "pm",
-                          )}
-                        </a>
-                      ) : null}
-                      {currentTask.sourceType === "imported" &&
-                      !currentTask.wcpDismissedAt ? (
-                        <>
-                          <Button
-                            type="button"
-                            size="sm"
-                            disabled={taskContextBusy}
-                            onClick={() =>
-                              void handleApplyWorkItemContext(currentTask)
-                            }
-                          >
-                            Aplicar contexto completo
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            disabled={sessionBusy}
-                            onClick={() =>
-                              void handleStartFocusForTask(currentTask)
-                            }
-                          >
-                            Iniciar foco
-                          </Button>
-                        </>
-                      ) : null}
-                      {currentTask.organizationId ? (
-                        <Badge variant="secondary">
-                          {organizationMap.get(currentTask.organizationId) ??
-                            "Empresa"}
-                        </Badge>
-                      ) : null}
-                      {currentTask.wcpDismissedAt ? (
-                        <Badge variant="secondary">Ignorada no WCP</Badge>
-                      ) : null}
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() => openEditTaskForm()}
-                      >
-                        Editar
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        disabled={taskActionBusy}
-                        onClick={() => void handleDuplicateTask()}
-                      >
-                        Duplicar
-                      </Button>
-                      {currentTask.primaryRepositoryId ? (
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={() =>
+            <Dialog
+              open={
+                taskDetailDialogOpen &&
+                (taskFormMode === "create" || Boolean(selectedTaskId))
+              }
+              onOpenChange={(open) => {
+                if (open) {
+                  setTaskDetailDialogOpen(true);
+                  return;
+                }
+                attemptCloseTaskDetailDialog();
+              }}
+            >
+              <DialogContent
+                className="max-h-[90vh] w-fit max-w-[90vw] gap-0 overflow-x-hidden overflow-y-auto p-0 sm:p-0"
+                onCloseClick={() => attemptCloseTaskDetailDialog()}
+                onEscapeKeyDown={(event) => {
+                  event.preventDefault();
+                  attemptCloseTaskDetailDialog();
+                }}
+                onPointerDownOutside={(event) => {
+                  if (
+                    (event.target as HTMLElement | null)?.closest(
+                      "[data-floating-menu]",
+                    )
+                  ) {
+                    event.preventDefault();
+                    return;
+                  }
+                  event.preventDefault();
+                  attemptCloseTaskDetailDialog();
+                }}
+              >
+                <DialogHeader className="sr-only">
+                  <DialogTitle>
+                    {taskFormMode === "create"
+                      ? "Nova tarefa"
+                      : (currentTask?.title ?? "Detalhe da tarefa")}
+                  </DialogTitle>
+                </DialogHeader>
+                <div className="min-w-[min(90vw,20rem)] max-w-[90vw] p-6">
+                  <TaskDetailPanel
+                    taskFormMode={taskFormMode}
+                    currentTask={currentTask}
+                    taskContextMessage={taskContextMessage}
+                    resumeSuggestion={resumeSuggestion}
+                    repositories={repositories}
+                    organizationMap={organizationMap}
+                    taskActionBusy={taskActionBusy}
+                    sessionBusy={sessionBusy}
+                    taskContextBusy={taskContextBusy}
+                    contextBusy={contextBusy}
+                    dependencyBusy={dependencyBusy}
+                    dependencyError={dependencyError}
+                    taskActionsMenuOpen={taskActionsMenuOpen}
+                    timelineFilter={timelineFilter}
+                    taskTimeline={taskTimeline}
+                    filteredTimeline={filteredTimeline}
+                    timelineCounts={timelineCounts}
+                    timelineFilters={TIMELINE_FILTERS}
+                    dependencies={taskContext?.dependencies ?? []}
+                    taskNotes={taskContext?.taskNotes ?? []}
+                    taskArtifacts={taskContext?.taskArtifacts ?? []}
+                    recentSessions={taskContext?.recentTaskSessions ?? []}
+                    dependencyTaskOptions={filteredBacklog
+                      .filter((item) => item.id !== selectedTaskId)
+                      .map((item) => ({
+                        value: item.id,
+                        label: item.title,
+                      }))}
+                    formatTaskStatus={formatTaskStatus}
+                    formatPmProviderLabel={formatPmProviderLabel}
+                    formatDateTime={formatDateTime}
+                    formatTimelineWhen={formatTimelineWhen}
+                    formatSourceTypeLabel={formatSourceTypeLabel}
+                    formatDependencySentence={formatDependencySentence}
+                    onTimelineFilterChange={setTimelineFilter}
+                    onTaskActionsMenuOpenChange={setTaskActionsMenuOpen}
+                    onQuickStatusChange={(status) =>
+                      void handleQuickStatusChange(status)
+                    }
+                    onStartFocus={() =>
+                      currentTask
+                        ? void handleStartFocusForTask(currentTask)
+                        : undefined
+                    }
+                    onApplyContext={() =>
+                      currentTask
+                        ? void handleApplyWorkItemContext(currentTask)
+                        : undefined
+                    }
+                    onEdit={openEditTaskForm}
+                    onDuplicate={() => void handleDuplicateTask()}
+                    onOpenGitContext={
+                      currentTask?.primaryRepositoryId
+                        ? () =>
                             openContextForRepository(
                               currentTask.primaryRepositoryId!,
                               currentTask.organizationId,
                             )
+                        : undefined
+                    }
+                    onRestoreDismissed={() => void handleRestoreDismissedTask()}
+                    onDismiss={() => void handleDismissTask()}
+                    onReopen={() => void handleReopenTask()}
+                    onArchive={() => void handleArchiveTask()}
+                    onLinkRepository={(repositoryId) => {
+                      if (!currentTask) {
+                        return;
+                      }
+                      void invoke("update_work_item", {
+                        workItemId: currentTask.id,
+                        title: currentTask.title,
+                        description: currentTask.description,
+                        status: currentTask.status,
+                        priority: currentTask.priority ?? 3,
+                        organizationId: currentTask.organizationId,
+                        projectId: currentTask.projectId,
+                        primaryRepositoryId: repositoryId,
+                        blockedReason: currentTask.blockedReason,
+                        resumeSummary: currentTask.resumeSummary,
+                      }).then(() => refreshDashboard());
+                    }}
+                    onDismissResumeSuggestion={() => setResumeSuggestion(null)}
+                    onApplyResumeSuggestion={() =>
+                      void handleApplyResumeSuggestion()
+                    }
+                    onCreateDependency={handleCreateDependency}
+                    onDeleteDependency={handleDeleteDependency}
+                    onClearDependencyError={() => setDependencyError(null)}
+                    onSaveNote={handleSaveTaskNote}
+                    onAttachArtifact={handleAttachArtifact}
+                    onResumeSession={handleResumeFromSession}
+                    taskFormPanel={
+                      <TaskFormPanel
+                        mode={taskFormMode!}
+                        draft={taskFormDraft}
+                        busy={taskFormBusy}
+                        error={taskFormError}
+                        warnings={taskFormWarnings}
+                        organizations={organizations}
+                        organizationLogoUrls={organizationLogoUrls}
+                        projects={projects}
+                        repositories={repositories}
+                        onDraftChange={updateTaskFormDraft}
+                        onCancel={() => {
+                          if (taskFormMode === "create") {
+                            closeTaskDetailDialog();
+                          } else {
+                            closeTaskForm();
                           }
-                        >
-                          Abrir contexto Git
-                        </Button>
-                      ) : null}
-                      {currentTask.wcpDismissedAt ? (
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          disabled={taskActionBusy}
-                          onClick={() => void handleRestoreDismissedTask()}
-                        >
-                          Restaurar ignorada
-                        </Button>
-                      ) : currentTask.sourceType === "imported" ? (
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          disabled={taskActionBusy}
-                          onClick={() => void handleDismissTask()}
-                        >
-                          Ignorar no WCP
-                        </Button>
-                      ) : null}
-                      {currentTask.status === "archived" ? (
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          disabled={taskActionBusy}
-                          onClick={() => void handleReopenTask()}
-                        >
-                          Reabrir
-                        </Button>
-                      ) : (
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          disabled={taskActionBusy}
-                          onClick={() => void handleArchiveTask()}
-                        >
-                          Arquivar
-                        </Button>
-                      )}
-                    </div>
-                  ) : null}
-                </div>
-
-                {taskContextMessage && currentTask ? (
-                  <p className="resultText">{taskContextMessage}</p>
-                ) : null}
-
-                {currentTask?.sourceType === "imported" &&
-                !currentTask.primaryRepositoryId ? (
-                  <div className="sessionForm compactForm">
-                    <p className="muted">
-                      Vincule um repositorio desta empresa para aplicar contexto
-                      Git automaticamente.
-                    </p>
-                    <label>
-                      Repositorio
-                      <select
-                        defaultValue=""
-                        onChange={(event) => {
-                          const repositoryId = event.target.value;
-                          if (!repositoryId || !currentTask) {
-                            return;
-                          }
-                          void invoke("update_work_item", {
-                            workItemId: currentTask.id,
-                            title: currentTask.title,
-                            description: currentTask.description,
-                            status: currentTask.status,
-                            priority: currentTask.priority ?? 3,
-                            organizationId: currentTask.organizationId,
-                            projectId: currentTask.projectId,
-                            primaryRepositoryId: repositoryId,
-                            blockedReason: currentTask.blockedReason,
-                            resumeSummary: currentTask.resumeSummary,
-                          }).then(() => refreshDashboard());
                         }}
-                      >
-                        <option value="">Selecione</option>
-                        {repositories
-                          .filter(
-                            (repo) =>
-                              repo.organizationId ===
-                              currentTask.organizationId,
-                          )
-                          .map((repo) => (
-                            <option key={repo.id} value={repo.id}>
-                              {repo.name}
-                            </option>
-                          ))}
-                      </select>
-                    </label>
-                  </div>
-                ) : null}
-
-                {resumeSuggestion &&
-                selectedTaskId === resumeSuggestion.taskId &&
-                !taskFormMode ? (
-                  <StatusAlert status="ok" title="Sugestao de retomada">
-                    <div className="grid gap-3">
-                      <span>{resumeSuggestion.text}</span>
-                      <div className="actionRow">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={() => setResumeSuggestion(null)}
-                        >
-                          Ignorar
-                        </Button>
-                        <Button
-                          type="button"
-                          size="sm"
-                          disabled={taskActionBusy}
-                          onClick={() => void handleApplyResumeSuggestion()}
-                        >
-                          Usar como retomada
-                        </Button>
-                      </div>
-                    </div>
-                  </StatusAlert>
-                ) : null}
-
-                {taskFormMode ? (
-                  <TaskFormPanel
-                    mode={taskFormMode}
-                    draft={taskFormDraft}
-                    busy={taskFormBusy}
-                    error={taskFormError}
-                    warnings={taskFormWarnings}
-                    organizations={organizations}
-                    organizationLogoUrls={organizationLogoUrls}
-                    projects={projects}
-                    repositories={repositories}
-                    onDraftChange={updateTaskFormDraft}
-                    onCancel={closeTaskForm}
-                    onSave={() => void handleSaveTaskForm()}
+                        onSave={() => void handleSaveTaskForm()}
+                      />
+                    }
                   />
-                ) : currentTask ? (
-                  <div className="taskDetailGrid">
-                    <div className="taskQuickActions">
-                      <h3 className="subheading">Status rapido</h3>
-                      <div className="timelineFilters">
-                        {QUICK_STATUS_OPTIONS.map((option) => (
-                          <Button
-                            key={option.value}
-                            type="button"
-                            size="sm"
-                            variant={
-                              currentTask.status === option.value
-                                ? "default"
-                                : "outline"
-                            }
-                            disabled={
-                              taskActionBusy ||
-                              currentTask.status === option.value
-                            }
-                            onClick={() =>
-                              void handleQuickStatusChange(option.value)
-                            }
-                          >
-                            {option.label}
-                          </Button>
-                        ))}
-                      </div>
-                    </div>
-                    {currentTask.description || currentTask.resumeSummary ? (
-                      <div className="taskContextSummary">
-                        {currentTask.description ? (
-                          <p className="muted">{currentTask.description}</p>
-                        ) : null}
-                        {currentTask.resumeSummary ? (
-                          <StatusAlert status="ok" title="Retomada">
-                            {currentTask.resumeSummary}
-                          </StatusAlert>
-                        ) : null}
-                      </div>
-                    ) : null}
-                    <div>
-                      <h3 className="subheading">Historico</h3>
-                      {taskTimeline.length > 0 ? (
-                        <FilterTabs
-                          value={timelineFilter}
-                          onValueChange={setTimelineFilter}
-                          aria-label="Filtrar historico por tipo"
-                          items={TIMELINE_FILTERS.map((filter) => ({
-                            id: filter.id,
-                            label: `${filter.label} (${timelineCounts[filter.id]})`,
-                            icon: HISTORY_KIND_ICONS[filter.id],
-                          }))}
-                        />
-                      ) : null}
-                      {taskTimeline.length === 0 ? (
-                        <StatusAlert status="warning" title="Historico vazio">
-                          Comece um foco ou adicione notas para montar o
-                          contexto.
-                        </StatusAlert>
-                      ) : filteredTimeline.length > 0 ? (
-                        <ul className="timelineList">
-                          {filteredTimeline.map((entry) => (
-                            <TimelineEntry
-                              key={entry.id}
-                              kind={entry.kind}
-                              title={entry.title}
-                              detail={entry.detail}
-                              when={formatTimelineWhen(entry.createdAt)}
-                            />
-                          ))}
-                        </ul>
-                      ) : (
-                        <StatusAlert status="warning" title="Nada neste filtro">
-                          Tente outro tipo de evento.
-                        </StatusAlert>
-                      )}
-
-                      {currentTask?.blockedReason ? (
-                        <>
-                          <h3 className="subheading">Por que esta parada</h3>
-                          <StatusAlert status="mismatch" title="Bloqueio">
-                            {currentTask.blockedReason}
-                          </StatusAlert>
-                        </>
-                      ) : null}
-
-                      <h3 className="subheading">Dependencias</h3>
-                      <div className="sessionForm compactForm">
-                        <p className="muted">
-                          Esta tarefa:{" "}
-                          <strong>
-                            {currentTask?.title ?? "Sem tarefa selecionada"}
-                          </strong>
-                        </p>
-                        <label>
-                          Relacao com outra tarefa
-                          <select
-                            value={dependencyRelation}
-                            onChange={(event) => {
-                              setDependencyRelation(
-                                event.target.value as "depends_on" | "blocks",
-                              );
-                              setDependencyError(null);
-                            }}
-                          >
-                            <option value="depends_on">depende de</option>
-                            <option value="blocks">bloqueia</option>
-                          </select>
-                        </label>
-                        <label>
-                          Tarefa
-                          <select
-                            value={dependencyTargetId}
-                            onChange={(event) => {
-                              setDependencyTargetId(event.target.value);
-                              setDependencyError(null);
-                            }}
-                          >
-                            <option value="">Selecione a tarefa</option>
-                            {filteredBacklog
-                              .filter((item) => item.id !== selectedTaskId)
-                              .map((item) => (
-                                <option key={item.id} value={item.id}>
-                                  {item.title}
-                                </option>
-                              ))}
-                          </select>
-                        </label>
-                        {dependencyPreviewText ? (
-                          <p className="dependencyPreview">
-                            {dependencyPreviewText}
-                          </p>
-                        ) : null}
-                        {dependencyError ? (
-                          <p className="dependencyError">{dependencyError}</p>
-                        ) : null}
-                        <div className="actionRow">
-                          <Button
-                            type="button"
-                            variant="outline"
-                            onClick={handleCreateDependency}
-                            disabled={
-                              dependencyBusy ||
-                              !currentTask ||
-                              !dependencyTargetId
-                            }
-                          >
-                            Adicionar dependencia
-                          </Button>
-                        </div>
-                      </div>
-                      {(taskContext?.dependencies ?? []).length > 0 ? (
-                        <ul className="historyList">
-                          {(taskContext?.dependencies ?? []).map(
-                            (dependency) => (
-                              <li key={dependency.id}>
-                                <div>
-                                  <strong>{dependency.title}</strong>
-                                  <span>
-                                    {currentTask
-                                      ? formatDependencySentence(
-                                          currentTask.title,
-                                          dependency.relation,
-                                          dependency.title,
-                                        )
-                                      : dependency.relation === "depends_on"
-                                        ? "depende de"
-                                        : "bloqueia"}
-                                  </span>
-                                  <code>{dependency.status}</code>
-                                </div>
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  onClick={() =>
-                                    handleDeleteDependency(dependency.id)
-                                  }
-                                  disabled={dependencyBusy}
-                                >
-                                  Remover
-                                </Button>
-                              </li>
-                            ),
-                          )}
-                        </ul>
-                      ) : (
-                        <StatusAlert status="ok" title="Tudo livre">
-                          Nenhuma dependencia registrada nesta tarefa.
-                        </StatusAlert>
-                      )}
-
-                      <h3 className="subheading">Notas</h3>
-                      <div className="sessionForm compactForm">
-                        <label>
-                          Titulo
-                          <input
-                            value={noteTitle}
-                            onChange={(event) =>
-                              setNoteTitle(event.target.value)
-                            }
-                            placeholder="Decisao tomada"
-                          />
-                        </label>
-                        <label>
-                          Conteudo
-                          <Textarea
-                            value={noteContent}
-                            onChange={(event) =>
-                              setNoteContent(event.target.value)
-                            }
-                            placeholder="Ex.: manter invalidação após persistência do novo token"
-                          />
-                        </label>
-                        <div className="actionRow">
-                          <Button
-                            type="button"
-                            variant="outline"
-                            onClick={handleSaveTaskNote}
-                            disabled={contextBusy}
-                          >
-                            Salvar nota
-                          </Button>
-                        </div>
-                      </div>
-
-                      <ul className="historyList">
-                        {(taskContext?.taskNotes ?? []).map((note) => (
-                          <li key={note.id}>
-                            <div>
-                              <strong>{note.title}</strong>
-                              {note.sourceType ? (
-                                <Badge variant="outline">
-                                  {formatSourceTypeLabel(note.sourceType)}
-                                </Badge>
-                              ) : null}
-                              <span>{formatDateTime(note.createdAt)}</span>
-                              <code>{note.content}</code>
-                            </div>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-
-                    <div>
-                      <h3 className="subheading">Ultimos focos</h3>
-                      {(taskContext?.recentTaskSessions ?? []).length > 0 ? (
-                        <ul className="historyList">
-                          {(taskContext?.recentTaskSessions ?? []).map(
-                            (session) => (
-                              <li key={session.id}>
-                                <div>
-                                  <strong>
-                                    {session.workItemExternalKey
-                                      ? `${session.workItemExternalKey} · `
-                                      : ""}
-                                    {formatDateTime(session.startedAt)}
-                                  </strong>
-                                  {session.workItemExternalProvider ? (
-                                    <Badge variant="outline">
-                                      {formatPmProviderLabel(
-                                        session.workItemExternalProvider,
-                                      )}
-                                    </Badge>
-                                  ) : null}
-                                  {session.sourceType ? (
-                                    <Badge variant="outline">
-                                      {formatSourceTypeLabel(
-                                        session.sourceType,
-                                      )}
-                                    </Badge>
-                                  ) : null}
-                                  <span>
-                                    {session.branchName ??
-                                      "Branch nao registrada"}
-                                  </span>
-                                  <span>
-                                    {session.goal ?? "Sem objetivo registrado"}
-                                  </span>
-                                </div>
-                                <div className="historyMeta">
-                                  <code>
-                                    {session.result ??
-                                      "Ainda sem resultado final"}
-                                  </code>
-                                  <Button
-                                    type="button"
-                                    variant="outline"
-                                    onClick={() =>
-                                      handleResumeFromSession(session)
-                                    }
-                                  >
-                                    Retomar
-                                  </Button>
-                                </div>
-                              </li>
-                            ),
-                          )}
-                        </ul>
-                      ) : (
-                        <StatusAlert
-                          status="warning"
-                          title="Sem sessoes anteriores"
-                        >
-                          Quando encerrar um foco, ele aparece aqui.
-                        </StatusAlert>
-                      )}
-
-                      <h3 className="subheading">Links e anexos</h3>
-                      <div className="sessionForm compactForm">
-                        <label>
-                          Titulo
-                          <input
-                            value={artifactTitle}
-                            onChange={(event) =>
-                              setArtifactTitle(event.target.value)
-                            }
-                            placeholder="PR, doc, link"
-                          />
-                        </label>
-                        <label>
-                          URL
-                          <input
-                            value={artifactUrl}
-                            onChange={(event) =>
-                              setArtifactUrl(event.target.value)
-                            }
-                            placeholder="https://..."
-                          />
-                        </label>
-                        <div className="actionRow">
-                          <Button
-                            type="button"
-                            variant="outline"
-                            onClick={handleAttachArtifact}
-                            disabled={contextBusy}
-                          >
-                            Anexar link
-                          </Button>
-                        </div>
-                      </div>
-
-                      <ul className="historyList">
-                        {(taskContext?.taskArtifacts ?? []).map((artifact) => (
-                          <li key={artifact.id}>
-                            <div>
-                              <strong>
-                                {artifact.title ?? artifact.artifactType}
-                              </strong>
-                              {artifact.sourceType ? (
-                                <Badge variant="outline">
-                                  {formatSourceTypeLabel(artifact.sourceType)}
-                                </Badge>
-                              ) : null}
-                              <span>{formatDateTime(artifact.createdAt)}</span>
-                              <code>{artifact.url ?? "-"}</code>
-                            </div>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  </div>
-                ) : (
-                  <StatusAlert status="warning" title="Escolha uma tarefa">
-                    A lista ao lado mostra tudo que esta no seu backlog.
-                  </StatusAlert>
-                )}
-              </div>
-            </div>
-          </section>
+                </div>
+              </DialogContent>
+            </Dialog>
+          </BacklogView>
         ) : null}
 
         {activeView === "organizations" ? (
-          <section className="panel orgPanel">
-            <div className="orgLayout">
-              <aside className="orgSidebar">
-                <div className="backlogSidebarHeader">
-                  <SectionTitle icon={Building2}>Empresas</SectionTitle>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => {
-                      setShowNewOrgForm((current) => !current);
-                      setOrgSetupError(null);
-                    }}
-                  >
-                    <Plus className="h-4 w-4" aria-hidden />
-                    Nova empresa
-                  </Button>
-                </div>
-
-                {showNewOrgForm ? (
-                  <div className="sessionForm compactForm">
-                    <label>
-                      Nome
-                      <input
-                        value={newOrgName}
-                        onChange={(event) => setNewOrgName(event.target.value)}
-                        placeholder="Empresa A"
-                      />
-                    </label>
-                    <label>
-                      Tipo
-                      <select
-                        value={newOrgKind}
-                        onChange={(event) => setNewOrgKind(event.target.value)}
-                      >
-                        <option value="company">Empresa</option>
-                        <option value="personal">Pessoal</option>
-                        <option value="community">Comunidade</option>
-                      </select>
-                    </label>
-                    <div className="actionRow">
-                      <Button
-                        type="button"
-                        onClick={() => void handleCreateOrganization()}
-                        disabled={orgSetupBusy || !newOrgName.trim()}
-                      >
-                        <Building2 className="h-4 w-4" aria-hidden />
-                        Criar empresa
-                      </Button>
-                    </div>
-                  </div>
-                ) : null}
-
-                <div className="repoList orgOrgList">
-                  {organizations.map((organization) => (
-                    <SelectableListItem
-                      key={organization.id}
-                      active={orgSetupSelectedId === organization.id}
+          <OrganizationsView>
+            <SplitLayout
+              sidebar={
+                <div className="orgSidebar grid gap-3">
+                  <div className="backlogSidebarHeader">
+                    <SectionTitle icon={Building2}>Empresas</SectionTitle>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
                       onClick={() => {
-                        setOrgSetupSelectedId(organization.id);
+                        setOrgCreateDialogOpen(true);
                         setOrgSetupError(null);
                       }}
-                      leading={
-                        <OrganizationAvatar
-                          name={organization.name}
-                          kind={organization.kind}
-                          logoUrl={getOrganizationLogoUrl(organization.id)}
-                          size="sm"
-                        />
-                      }
-                      title={organization.name}
-                      subtitle={formatOrganizationKind(organization.kind)}
                     >
-                      {organization.gitUserName ? (
-                        <Badge variant="outline">
-                          {organization.gitUserName}
-                        </Badge>
-                      ) : (
-                        <Badge variant="warning">Sem identidade Git</Badge>
-                      )}
-                      <span>
-                        {
-                          projects.filter(
-                            (project) =>
-                              project.organizationId === organization.id,
-                          ).length
-                        }{" "}
-                        projetos
-                      </span>
-                    </SelectableListItem>
-                  ))}
-                </div>
-              </aside>
+                      <Plus className="h-4 w-4" aria-hidden />
+                      Nova empresa
+                    </Button>
+                  </div>
 
+                  <div className="repoList orgOrgList">
+                    {organizations.map((organization) => (
+                      <SelectableListItem
+                        key={organization.id}
+                        active={orgSetupSelectedId === organization.id}
+                        onClick={() => {
+                          setOrgSetupSelectedId(organization.id);
+                          setOrgSetupError(null);
+                          setOrgSetupSuccess(null);
+                        }}
+                        leading={
+                          <OrganizationAvatar
+                            name={organization.name}
+                            kind={organization.kind}
+                            logoUrl={getOrganizationLogoUrl(organization.id)}
+                            size="sm"
+                          />
+                        }
+                        title={organization.name}
+                        subtitle={formatOrganizationKind(organization.kind)}
+                      >
+                        {organization.gitUserName ? (
+                          <Badge variant="outline">
+                            {organization.gitUserName}
+                          </Badge>
+                        ) : (
+                          <Badge variant="warning">Sem identidade Git</Badge>
+                        )}
+                        <span>
+                          {
+                            projects.filter(
+                              (project) =>
+                                project.organizationId === organization.id,
+                            ).length
+                          }{" "}
+                          projetos
+                        </span>
+                      </SelectableListItem>
+                    ))}
+                  </div>
+                </div>
+              }
+            >
               <div className="orgDetail">
                 {orgSetupError ? (
                   <p className="errorText">{orgSetupError}</p>
@@ -6549,28 +6071,19 @@ export function App() {
                               ) : null}
                             </div>
                           </div>
-                          <label>
-                            Nome
-                            <input
-                              value={orgEditName}
-                              onChange={(event) =>
-                                setOrgEditName(event.target.value)
-                              }
-                            />
-                          </label>
-                          <label>
-                            Tipo
-                            <select
-                              value={orgEditKind}
-                              onChange={(event) =>
-                                setOrgEditKind(event.target.value)
-                              }
-                            >
-                              <option value="company">Empresa</option>
-                              <option value="personal">Pessoal</option>
-                              <option value="community">Comunidade</option>
-                            </select>
-                          </label>
+                          <SessionFieldInput
+                            label="Nome"
+                            value={orgEditName}
+                            onChange={(event) =>
+                              setOrgEditName(event.target.value)
+                            }
+                          />
+                          <SessionFieldSelect
+                            label="Tipo"
+                            value={orgEditKind}
+                            onValueChange={setOrgEditKind}
+                            options={[...ORG_KIND_OPTIONS]}
+                          />
                           <div className="actionRow">
                             <Button
                               type="button"
@@ -6606,239 +6119,125 @@ export function App() {
 
                     {orgDetailTab === "projects" ? (
                       <div className="orgDetailSection">
-                        <div className="sessionForm compactForm">
-                          <label>
-                            Nome do projeto
-                            <input
-                              value={newOrgProjectName}
-                              onChange={(event) =>
-                                setNewOrgProjectName(event.target.value)
-                              }
-                              placeholder="IAM Platform"
-                            />
-                          </label>
-                          <label>
-                            Descricao (opcional)
-                            <Textarea
-                              value={newOrgProjectDescription}
-                              onChange={(event) =>
-                                setNewOrgProjectDescription(event.target.value)
-                              }
-                            />
-                          </label>
-                          <div className="actionRow">
+                        <DetailSection
+                          title="Projetos"
+                          action={
                             <Button
                               type="button"
-                              onClick={() => void handleCreateOrgProject()}
-                              disabled={
-                                orgSetupBusy || !newOrgProjectName.trim()
-                              }
+                              variant="outline"
+                              size="sm"
+                              onClick={() => setOrgProjectDialogOpen(true)}
                             >
+                              <Plus className="h-4 w-4" aria-hidden />
                               Novo projeto
                             </Button>
-                          </div>
-                        </div>
-
-                        <ul className="historyList">
-                          {orgSetupProjects.map((project) => (
-                            <li key={project.id}>
-                              <div>
-                                <strong>{project.name}</strong>
-                                <span>
-                                  {project.description?.trim() ||
-                                    "Sem descricao"}
-                                </span>
-                              </div>
-                              <Button
-                                type="button"
-                                variant="destructive"
-                                onClick={() =>
-                                  void handleDeleteOrgProject(project)
-                                }
-                                disabled={orgSetupBusy}
-                              >
-                                Excluir
-                              </Button>
-                            </li>
-                          ))}
-                        </ul>
+                          }
+                        >
+                          {orgSetupProjects.length > 0 ? (
+                            <ul className="historyList">
+                              {orgSetupProjects.map((project) => (
+                                <li key={project.id}>
+                                  <div>
+                                    <strong>{project.name}</strong>
+                                    <span>
+                                      {project.description?.trim() ||
+                                        "Sem descricao"}
+                                    </span>
+                                  </div>
+                                  <Button
+                                    type="button"
+                                    variant="destructive"
+                                    onClick={() =>
+                                      void handleDeleteOrgProject(project)
+                                    }
+                                    disabled={orgSetupBusy}
+                                  >
+                                    Excluir
+                                  </Button>
+                                </li>
+                              ))}
+                            </ul>
+                          ) : (
+                            <StatusAlert status="warning" title="Sem projetos">
+                              Crie o primeiro projeto desta empresa.
+                            </StatusAlert>
+                          )}
+                        </DetailSection>
                       </div>
                     ) : null}
 
                     {orgDetailTab === "repos" ? (
                       <div className="orgDetailSection">
-                        <div className="sessionForm compactForm">
-                          <label>
-                            Projeto (opcional)
-                            <select
-                              value={orgLinkProjectId}
-                              onChange={(event) =>
-                                setOrgLinkProjectId(event.target.value)
-                              }
-                            >
-                              <option value="">Sem projeto</option>
-                              {orgSetupProjects.map((project) => (
-                                <option key={project.id} value={project.id}>
-                                  {project.name}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
-                          <LocalPathField
-                            path={orgLinkRepoPath}
-                            inspecting={orgLinkInspecting}
-                            onPathChange={(value) => {
-                              setOrgLinkRepoPath(value);
-                              setOrgLinkInspection(null);
-                            }}
-                            onBrowse={async () => {
-                              const picked =
-                                await pickLocalFolder(orgLinkRepoPath);
-                              if (!picked) return;
-                              setOrgLinkRepoPath(picked);
-                              setOrgLinkInspection(null);
-                            }}
-                            onInspect={() =>
-                              void inspectLocalProjectPath(orgLinkRepoPath, {
-                                setInspection: setOrgLinkInspection,
-                                setPath: setOrgLinkRepoPath,
-                                setError: setOrgSetupError,
-                                setInspecting: setOrgLinkInspecting,
-                                onDetected: (inspection) => {
-                                  if (
-                                    !orgLinkRepoName.trim() &&
-                                    inspection.suggestedName
-                                  ) {
-                                    setOrgLinkRepoName(
-                                      inspection.suggestedName,
-                                    );
-                                  }
-                                  if (
-                                    !orgLinkRepoRemote.trim() &&
-                                    inspection.remoteUrl
-                                  ) {
-                                    setOrgLinkRepoRemote(inspection.remoteUrl);
-                                  }
-                                },
-                              })
-                            }
-                          />
-                          <label>
-                            Nome do repositorio
-                            <input
-                              value={orgLinkRepoName}
-                              onChange={(event) =>
-                                setOrgLinkRepoName(event.target.value)
-                              }
-                            />
-                          </label>
-                          <label>
-                            Remoto (opcional)
-                            <input
-                              value={orgLinkRepoRemote}
-                              onChange={(event) =>
-                                setOrgLinkRepoRemote(event.target.value)
-                              }
-                            />
-                          </label>
-                          <div className="actionRow">
-                            <Button
-                              type="button"
-                              onClick={() => void handleOrgLinkRepository()}
-                              disabled={
-                                orgSetupBusy ||
-                                !orgLinkRepoName.trim() ||
-                                !orgLinkRepoPath.trim() ||
-                                !orgLinkInspection?.isGitRepo
-                              }
-                            >
-                              Vincular repo
-                            </Button>
-                          </div>
-                        </div>
-
-                        <div className="sessionForm compactForm">
-                          <label>
-                            Reassociar repositorio
-                            <select
-                              value={reassignRepoId}
-                              onChange={(event) =>
-                                setReassignRepoId(event.target.value)
-                              }
-                            >
-                              <option value="">Selecione</option>
+                        <DetailSection
+                          title="Repositorios"
+                          action={
+                            <div className="flex flex-wrap gap-2">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => setOrgLinkRepoDialogOpen(true)}
+                              >
+                                <Plus className="h-4 w-4" aria-hidden />
+                                Vincular
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => setOrgReassignDialogOpen(true)}
+                              >
+                                Reassociar
+                              </Button>
+                            </div>
+                          }
+                        >
+                          {orgSetupRepositories.length > 0 ? (
+                            <ul className="historyList orgRepoMapping">
                               {orgSetupRepositories.map((repository) => (
-                                <option
-                                  key={repository.id}
-                                  value={repository.id}
-                                >
-                                  {repository.name}
-                                </option>
+                                <li key={repository.id}>
+                                  <div>
+                                    <strong>{repository.name}</strong>
+                                    <span>
+                                      {repository.projectName ?? "Sem projeto"}{" "}
+                                      ·{" "}
+                                      {repository.localPath ??
+                                        "Sem pasta local"}
+                                    </span>
+                                  </div>
+                                  <div className="actionRow">
+                                    <Button
+                                      type="button"
+                                      variant="outline"
+                                      onClick={() =>
+                                        openGitContextForRepo(repository)
+                                      }
+                                    >
+                                      Ir para troca de contexto
+                                    </Button>
+                                    <Button
+                                      type="button"
+                                      variant="destructive"
+                                      onClick={() =>
+                                        void handleDeleteRepository(repository)
+                                      }
+                                      disabled={orgSetupBusy}
+                                    >
+                                      Excluir
+                                    </Button>
+                                  </div>
+                                </li>
                               ))}
-                            </select>
-                          </label>
-                          <label>
-                            Projeto
-                            <select
-                              value={reassignProjectId}
-                              onChange={(event) =>
-                                setReassignProjectId(event.target.value)
-                              }
+                            </ul>
+                          ) : (
+                            <StatusAlert
+                              status="warning"
+                              title="Sem repositorios"
                             >
-                              <option value="">Sem projeto</option>
-                              {orgSetupProjects.map((project) => (
-                                <option key={project.id} value={project.id}>
-                                  {project.name}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
-                          <div className="actionRow">
-                            <Button
-                              type="button"
-                              variant="outline"
-                              onClick={() => void handleReassignRepository()}
-                              disabled={orgSetupBusy || !reassignRepoId}
-                            >
-                              Reassociar
-                            </Button>
-                          </div>
-                        </div>
-
-                        <ul className="historyList orgRepoMapping">
-                          {orgSetupRepositories.map((repository) => (
-                            <li key={repository.id}>
-                              <div>
-                                <strong>{repository.name}</strong>
-                                <span>
-                                  {repository.projectName ?? "Sem projeto"} ·{" "}
-                                  {repository.localPath ?? "Sem pasta local"}
-                                </span>
-                              </div>
-                              <div className="actionRow">
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  onClick={() =>
-                                    openGitContextForRepo(repository)
-                                  }
-                                >
-                                  Ir para troca de contexto
-                                </Button>
-                                <Button
-                                  type="button"
-                                  variant="destructive"
-                                  onClick={() =>
-                                    void handleDeleteRepository(repository)
-                                  }
-                                  disabled={orgSetupBusy}
-                                >
-                                  Excluir
-                                </Button>
-                              </div>
-                            </li>
-                          ))}
-                        </ul>
+                              Vincule a primeira pasta Git desta empresa.
+                            </StatusAlert>
+                          )}
+                        </DetailSection>
                       </div>
                     ) : null}
 
@@ -6907,34 +6306,28 @@ export function App() {
                                 </StatusAlert>
                               ) : null}
 
-                              <label>
-                                Repositorio
-                                <select
-                                  value={orgIdentityImportRepoId ?? ""}
-                                  onChange={(event) => {
-                                    setOrgIdentityImportRepoId(
-                                      event.target.value || null,
-                                    );
-                                    setOrgIdentityImportPreview(null);
-                                  }}
-                                >
-                                  {orgSetupRepositories
-                                    .filter((repository) =>
-                                      repository.localPath?.trim(),
-                                    )
-                                    .map((repository) => (
-                                      <option
-                                        key={repository.id}
-                                        value={repository.id}
-                                      >
-                                        {repository.name}
-                                        {repository.localPath
-                                          ? ` · ${repository.localPath}`
-                                          : ""}
-                                      </option>
-                                    ))}
-                                </select>
-                              </label>
+                              <SessionFieldSelect
+                                label="Repositorio"
+                                value={orgIdentityImportRepoId ?? ""}
+                                onValueChange={(value) => {
+                                  setOrgIdentityImportRepoId(value || null);
+                                  setOrgIdentityImportPreview(null);
+                                }}
+                                allowEmpty
+                                emptyLabel="Selecione"
+                                options={orgSetupRepositories
+                                  .filter((repository) =>
+                                    repository.localPath?.trim(),
+                                  )
+                                  .map((repository) => ({
+                                    value: repository.id,
+                                    label: `${repository.name}${
+                                      repository.localPath
+                                        ? ` · ${repository.localPath}`
+                                        : ""
+                                    }`,
+                                  }))}
+                              />
 
                               <div className="actionRow">
                                 <Button
@@ -6976,81 +6369,65 @@ export function App() {
                         </div>
 
                         <div className="orgIdentityGrid sessionForm compactForm">
-                          <label>
-                            Provider type
-                            <select
-                              value={orgEnvProviderType}
-                              onChange={(event) => {
-                                markOrgEnvFormDirty();
-                                setOrgEnvProviderType(event.target.value);
-                              }}
-                            >
-                              <option value="">Selecione</option>
-                              <option value="github">GitHub</option>
-                              <option value="gitlab">GitLab</option>
-                              <option value="bitbucket">Bitbucket</option>
-                              <option value="gitea">Gitea</option>
-                              <option value="azure">Azure</option>
-                              <option value="other">Outro</option>
-                            </select>
-                          </label>
-                          <label>
-                            Provider host
-                            <input
-                              value={orgEnvProviderHost}
-                              onChange={(event) => {
-                                markOrgEnvFormDirty();
-                                setOrgEnvProviderHost(event.target.value);
-                              }}
-                            />
-                          </label>
-                          <label>
-                            Alias SSH
+                          <SessionFieldSelect
+                            label="Provider type"
+                            value={orgEnvProviderType}
+                            onValueChange={(value) => {
+                              markOrgEnvFormDirty();
+                              setOrgEnvProviderType(value);
+                            }}
+                            allowEmpty
+                            emptyLabel="Selecione"
+                            options={[...PROVIDER_TYPE_OPTIONS]}
+                          />
+                          <SessionFieldInput
+                            label="Provider host"
+                            value={orgEnvProviderHost}
+                            onChange={(event) => {
+                              markOrgEnvFormDirty();
+                              setOrgEnvProviderHost(event.target.value);
+                            }}
+                          />
+                          <div className="grid gap-2 text-sm">
+                            <Label className="text-sm text-muted-foreground">
+                              Alias SSH
+                            </Label>
                             {orgIdentitySshInputMode === "selector" ? (
                               <div className="orgIdentitySshSelectorRow">
-                                <select
+                                <FieldSelect
+                                  label=""
+                                  labelClassName="sr-only"
                                   value={orgIdentitySelectedSshHost}
-                                  onChange={(event) => {
+                                  onValueChange={(value) => {
                                     const entry = sshConfigHosts.find(
-                                      (host) =>
-                                        host.hostAlias === event.target.value,
+                                      (host) => host.hostAlias === value,
                                     );
                                     if (entry) {
                                       applySshConfigHostEntry(entry);
                                     }
                                   }}
+                                  allowEmpty
+                                  emptyLabel={
+                                    sshConfigHostsLoading
+                                      ? "Carregando ~/.ssh/config..."
+                                      : "Selecione um host SSH"
+                                  }
                                   disabled={
                                     sshConfigHostsLoading ||
                                     sshConfigHosts.length === 0
                                   }
-                                >
-                                  <option value="">
-                                    {sshConfigHostsLoading
-                                      ? "Carregando ~/.ssh/config..."
-                                      : "Selecione um host SSH"}
-                                  </option>
-                                  {Array.from(
+                                  options={Array.from(
                                     groupSshConfigHostsBySection(
                                       sshConfigHosts,
                                     ),
-                                  ).map(([sectionLabel, hosts]) => (
-                                    <optgroup
-                                      key={sectionLabel}
-                                      label={sectionLabel}
-                                    >
-                                      {hosts.map((entry) => (
-                                        <option
-                                          key={entry.hostAlias}
-                                          value={entry.hostAlias}
-                                        >
-                                          {formatSshConfigHostOptionLabel(
-                                            entry,
-                                          )}
-                                        </option>
-                                      ))}
-                                    </optgroup>
-                                  ))}
-                                </select>
+                                  ).flatMap(([sectionLabel, hosts]) =>
+                                    hosts.map((entry) => ({
+                                      value: entry.hostAlias,
+                                      label: `${sectionLabel} · ${formatSshConfigHostOptionLabel(entry)}`,
+                                    })),
+                                  )}
+                                  className="min-w-[200px] flex-1"
+                                />
                                 <Button
                                   type="button"
                                   variant="outline"
@@ -7063,7 +6440,8 @@ export function App() {
                               </div>
                             ) : (
                               <div className="orgIdentitySshSelectorRow">
-                                <input
+                                <Input
+                                  className="h-10 min-w-[200px] flex-1 rounded-xl bg-background/90"
                                   value={orgEnvSshHostAlias}
                                   onChange={(event) => {
                                     markOrgEnvFormDirty();
@@ -7114,94 +6492,80 @@ export function App() {
                                 ).
                               </span>
                             )}
-                          </label>
-                          <label>
-                            Git user.name
-                            <input
-                              value={orgEnvGitUserName}
-                              onChange={(event) => {
-                                markOrgEnvFormDirty();
-                                setOrgEnvGitUserName(event.target.value);
-                              }}
-                            />
-                          </label>
-                          <label>
-                            Git user.email
-                            <input
-                              value={orgEnvGitUserEmail}
-                              onChange={(event) => {
-                                markOrgEnvFormDirty();
-                                setOrgEnvGitUserEmail(event.target.value);
-                              }}
-                            />
-                          </label>
-                          <label>
-                            Padrao de branch
-                            <input
-                              value={orgEnvBranchPattern}
-                              onChange={(event) => {
-                                markOrgEnvFormDirty();
-                                setOrgEnvBranchPattern(event.target.value);
-                              }}
-                              placeholder="feature/*"
-                            />
-                          </label>
-                          <label>
-                            Convencao de PR
-                            <input
-                              value={orgEnvPrConvention}
-                              onChange={(event) => {
-                                markOrgEnvFormDirty();
-                                setOrgEnvPrConvention(event.target.value);
-                              }}
-                            />
-                          </label>
-                          <label>
-                            Convencao de commit
-                            <input
-                              value={orgEnvCommitConvention}
-                              onChange={(event) => {
-                                markOrgEnvFormDirty();
-                                setOrgEnvCommitConvention(event.target.value);
-                              }}
-                            />
-                          </label>
+                          </div>
+                          <SessionFieldInput
+                            label="Git user.name"
+                            value={orgEnvGitUserName}
+                            onChange={(event) => {
+                              markOrgEnvFormDirty();
+                              setOrgEnvGitUserName(event.target.value);
+                            }}
+                          />
+                          <SessionFieldInput
+                            label="Git user.email"
+                            value={orgEnvGitUserEmail}
+                            onChange={(event) => {
+                              markOrgEnvFormDirty();
+                              setOrgEnvGitUserEmail(event.target.value);
+                            }}
+                          />
+                          <SessionFieldInput
+                            label="Padrao de branch"
+                            value={orgEnvBranchPattern}
+                            onChange={(event) => {
+                              markOrgEnvFormDirty();
+                              setOrgEnvBranchPattern(event.target.value);
+                            }}
+                            placeholder="feature/*"
+                          />
+                          <SessionFieldInput
+                            label="Convencao de PR"
+                            value={orgEnvPrConvention}
+                            onChange={(event) => {
+                              markOrgEnvFormDirty();
+                              setOrgEnvPrConvention(event.target.value);
+                            }}
+                          />
+                          <SessionFieldInput
+                            label="Convencao de commit"
+                            value={orgEnvCommitConvention}
+                            onChange={(event) => {
+                              markOrgEnvFormDirty();
+                              setOrgEnvCommitConvention(event.target.value);
+                            }}
+                          />
                         </div>
 
                         <div className="sessionForm compactForm">
                           <SectionTitle icon={Link2}>Links uteis</SectionTitle>
                           {orgUsefulLinks.map((link, index) => (
                             <div key={index} className="historyFilterRow">
-                              <label>
-                                Rotulo
-                                <input
-                                  value={link.label}
-                                  onChange={(event) => {
-                                    markOrgEnvFormDirty();
-                                    const next = [...orgUsefulLinks];
-                                    next[index] = {
-                                      ...next[index],
-                                      label: event.target.value,
-                                    };
-                                    setOrgUsefulLinks(next);
-                                  }}
-                                />
-                              </label>
-                              <label>
-                                URL
-                                <input
-                                  value={link.url}
-                                  onChange={(event) => {
-                                    markOrgEnvFormDirty();
-                                    const next = [...orgUsefulLinks];
-                                    next[index] = {
-                                      ...next[index],
-                                      url: event.target.value,
-                                    };
-                                    setOrgUsefulLinks(next);
-                                  }}
-                                />
-                              </label>
+                              <SessionFieldInput
+                                label="Rotulo"
+                                value={link.label}
+                                onChange={(event) => {
+                                  markOrgEnvFormDirty();
+                                  const next = [...orgUsefulLinks];
+                                  next[index] = {
+                                    ...next[index],
+                                    label: event.target.value,
+                                  };
+                                  setOrgUsefulLinks(next);
+                                }}
+                              />
+                              <SessionFieldInput
+                                label="URL"
+                                value={link.url}
+                                onChange={(event) => {
+                                  markOrgEnvFormDirty();
+                                  const next = [...orgUsefulLinks];
+                                  next[index] = {
+                                    ...next[index],
+                                    url: event.target.value,
+                                  };
+                                  setOrgUsefulLinks(next);
+                                }}
+                              />
                             </div>
                           ))}
                           <div className="actionRow">
@@ -7235,29 +6599,21 @@ export function App() {
                           <p className="backlogSidebarTitle">
                             Mapeamento por repositorio
                           </p>
-                          <label>
-                            Repositorio
-                            <select
-                              value={orgIdentityRepoId ?? ""}
-                              onChange={(event) => {
-                                setOrgIdentityRepoId(
-                                  event.target.value || null,
-                                );
-                                setOrgIdentityGuardrail(null);
-                                setOrgIdentityResult(null);
-                              }}
-                            >
-                              <option value="">Selecione</option>
-                              {orgSetupRepositories.map((repository) => (
-                                <option
-                                  key={repository.id}
-                                  value={repository.id}
-                                >
-                                  {repository.name}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
+                          <SessionFieldSelect
+                            label="Repositorio"
+                            value={orgIdentityRepoId ?? ""}
+                            onValueChange={(value) => {
+                              setOrgIdentityRepoId(value || null);
+                              setOrgIdentityGuardrail(null);
+                              setOrgIdentityResult(null);
+                            }}
+                            allowEmpty
+                            emptyLabel="Selecione"
+                            options={orgSetupRepositories.map((repository) => ({
+                              value: repository.id,
+                              label: repository.name,
+                            }))}
+                          />
                           {orgIdentityRemoteFixPreview ? (
                             <StatusAlert
                               status="warning"
@@ -7468,141 +6824,118 @@ export function App() {
                           ) : null}
                           {integrationWizardStep === "filters" ? (
                             <div className="sessionForm compactForm">
-                              <label className="backlogToggleArchived">
-                                <input
-                                  type="checkbox"
-                                  checked={
-                                    (integrationWizardProvider === "clickup"
-                                      ? clickUpSyncFilter
-                                      : jiraSyncFilter
-                                    ).assigneeOnly
+                              <FieldCheckbox
+                                label="Apenas tarefas atribuidas a mim"
+                                checked={
+                                  (integrationWizardProvider === "clickup"
+                                    ? clickUpSyncFilter
+                                    : jiraSyncFilter
+                                  ).assigneeOnly
+                                }
+                                onCheckedChange={(checked) => {
+                                  if (integrationWizardProvider === "clickup") {
+                                    setClickUpSyncFilter((current) => ({
+                                      ...current,
+                                      assigneeOnly: checked,
+                                    }));
+                                  } else {
+                                    setJiraSyncFilter((current) => ({
+                                      ...current,
+                                      assigneeOnly: checked,
+                                    }));
                                   }
-                                  onChange={(event) => {
-                                    const checked = event.target.checked;
-                                    if (
-                                      integrationWizardProvider === "clickup"
-                                    ) {
-                                      setClickUpSyncFilter((current) => ({
-                                        ...current,
-                                        assigneeOnly: checked,
-                                      }));
-                                    } else {
-                                      setJiraSyncFilter((current) => ({
-                                        ...current,
-                                        assigneeOnly: checked,
-                                      }));
-                                    }
-                                  }}
-                                />
-                                Apenas tarefas atribuidas a mim
-                              </label>
-                              <label className="backlogToggleArchived">
-                                <input
-                                  type="checkbox"
-                                  checked={
-                                    (integrationWizardProvider === "clickup"
-                                      ? clickUpSyncFilter
-                                      : jiraSyncFilter
-                                    ).focusCurrentWork
+                                }}
+                              />
+                              <FieldCheckbox
+                                label="Focar no trabalho atual (sprint aberta + atividade recente)"
+                                checked={
+                                  (integrationWizardProvider === "clickup"
+                                    ? clickUpSyncFilter
+                                    : jiraSyncFilter
+                                  ).focusCurrentWork
+                                }
+                                onCheckedChange={(checked) => {
+                                  if (integrationWizardProvider === "clickup") {
+                                    setClickUpSyncFilter((current) => ({
+                                      ...current,
+                                      focusCurrentWork: checked,
+                                    }));
+                                  } else {
+                                    setJiraSyncFilter((current) => ({
+                                      ...current,
+                                      focusCurrentWork: checked,
+                                    }));
                                   }
-                                  onChange={(event) => {
-                                    const checked = event.target.checked;
-                                    if (
-                                      integrationWizardProvider === "clickup"
-                                    ) {
-                                      setClickUpSyncFilter((current) => ({
-                                        ...current,
-                                        focusCurrentWork: checked,
-                                      }));
-                                    } else {
-                                      setJiraSyncFilter((current) => ({
-                                        ...current,
-                                        focusCurrentWork: checked,
-                                      }));
-                                    }
-                                  }}
-                                />
-                                Focar no trabalho atual (sprint aberta +
-                                atividade recente)
-                              </label>
+                                }}
+                              />
                               {(integrationWizardProvider === "clickup"
                                 ? clickUpSyncFilter
                                 : jiraSyncFilter
                               ).focusCurrentWork ? (
-                                <label>
-                                  Atividade nos ultimos (dias)
-                                  <input
-                                    type="number"
-                                    min={1}
-                                    max={365}
-                                    value={
-                                      (integrationWizardProvider === "clickup"
-                                        ? clickUpSyncFilter
-                                        : jiraSyncFilter
-                                      ).updatedWithinDays
-                                    }
-                                    onChange={(event) => {
-                                      const days =
-                                        Number(event.target.value) || 21;
-                                      if (
-                                        integrationWizardProvider === "clickup"
-                                      ) {
-                                        setClickUpSyncFilter((current) => ({
-                                          ...current,
-                                          updatedWithinDays: days,
-                                        }));
-                                      } else {
-                                        setJiraSyncFilter((current) => ({
-                                          ...current,
-                                          updatedWithinDays: days,
-                                        }));
-                                      }
-                                    }}
-                                  />
-                                </label>
-                              ) : null}
-                              <label className="backlogToggleArchived">
-                                <input
-                                  type="checkbox"
-                                  checked={
+                                <SessionFieldInput
+                                  label="Atividade nos ultimos (dias)"
+                                  type="number"
+                                  min={1}
+                                  max={365}
+                                  value={
                                     (integrationWizardProvider === "clickup"
                                       ? clickUpSyncFilter
                                       : jiraSyncFilter
-                                    ).includeClosed
+                                    ).updatedWithinDays
                                   }
                                   onChange={(event) => {
-                                    const checked = event.target.checked;
+                                    const days =
+                                      Number(event.target.value) || 21;
                                     if (
                                       integrationWizardProvider === "clickup"
                                     ) {
                                       setClickUpSyncFilter((current) => ({
                                         ...current,
-                                        includeClosed: checked,
+                                        updatedWithinDays: days,
                                       }));
                                     } else {
                                       setJiraSyncFilter((current) => ({
                                         ...current,
-                                        includeClosed: checked,
+                                        updatedWithinDays: days,
                                       }));
                                     }
                                   }}
                                 />
-                                Incluir fechadas
-                              </label>
+                              ) : null}
+                              <FieldCheckbox
+                                label="Incluir fechadas"
+                                checked={
+                                  (integrationWizardProvider === "clickup"
+                                    ? clickUpSyncFilter
+                                    : jiraSyncFilter
+                                  ).includeClosed
+                                }
+                                onCheckedChange={(checked) => {
+                                  if (integrationWizardProvider === "clickup") {
+                                    setClickUpSyncFilter((current) => ({
+                                      ...current,
+                                      includeClosed: checked,
+                                    }));
+                                  } else {
+                                    setJiraSyncFilter((current) => ({
+                                      ...current,
+                                      includeClosed: checked,
+                                    }));
+                                  }
+                                }}
+                              />
                               {integrationWizardProvider === "jira" ? (
-                                <label>
-                                  JQL customizado (opcional)
-                                  <input
-                                    value={jiraSyncFilter.jql}
-                                    onChange={(event) =>
-                                      setJiraSyncFilter((current) => ({
-                                        ...current,
-                                        jql: event.target.value,
-                                      }))
-                                    }
-                                    placeholder="Deixe vazio para usar o filtro padrao"
-                                  />
-                                </label>
+                                <SessionFieldInput
+                                  label="JQL customizado (opcional)"
+                                  value={jiraSyncFilter.jql}
+                                  onChange={(event) =>
+                                    setJiraSyncFilter((current) => ({
+                                      ...current,
+                                      jql: event.target.value,
+                                    }))
+                                  }
+                                  placeholder="Deixe vazio para usar o filtro padrao"
+                                />
                               ) : null}
                             </div>
                           ) : null}
@@ -7641,102 +6974,43 @@ export function App() {
                         </div>
 
                         <div className="orgIdentityInfoCard">
-                          <SectionTitle icon={Info}>
-                            Mapeamento Jira project → projeto WCP
-                          </SectionTitle>
-                          <div className="sessionForm compactForm">
-                            <label>
-                              Projeto Jira
-                              <select
-                                value={pmMappingDraft.externalProjectKey}
-                                onChange={(event) =>
-                                  setPmMappingDraft((current) => ({
-                                    ...current,
-                                    externalProjectKey: event.target.value,
-                                  }))
-                                }
+                          <DetailSection
+                            title="Mapeamento Jira project → projeto WCP"
+                            action={
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => setPmMappingDialogOpen(true)}
                               >
-                                <option value="">Selecione</option>
-                                {pmExternalProjects.map((projectKey) => (
-                                  <option key={projectKey} value={projectKey}>
-                                    {projectKey}
-                                  </option>
+                                <Plus className="h-4 w-4" aria-hidden />
+                                Novo mapeamento
+                              </Button>
+                            }
+                          >
+                            {pmProjectMappings.length > 0 ? (
+                              <ul className="historyList">
+                                {pmProjectMappings.map((mapping) => (
+                                  <li key={mapping.id}>
+                                    <strong>
+                                      {mapping.externalProjectKey}
+                                    </strong>
+                                    <span>
+                                      →{" "}
+                                      {mapping.projectName ?? mapping.projectId}
+                                      {mapping.defaultRepositoryName
+                                        ? ` · repo ${mapping.defaultRepositoryName}`
+                                        : ""}
+                                    </span>
+                                  </li>
                                 ))}
-                              </select>
-                            </label>
-                            <label>
-                              Projeto WCP
-                              <select
-                                value={pmMappingDraft.projectId}
-                                onChange={(event) =>
-                                  setPmMappingDraft((current) => ({
-                                    ...current,
-                                    projectId: event.target.value,
-                                  }))
-                                }
-                              >
-                                <option value="">Selecione</option>
-                                {projects
-                                  .filter(
-                                    (project) =>
-                                      project.organizationId ===
-                                      orgSetupSelectedId,
-                                  )
-                                  .map((project) => (
-                                    <option key={project.id} value={project.id}>
-                                      {project.name}
-                                    </option>
-                                  ))}
-                              </select>
-                            </label>
-                            <label>
-                              Repo padrao (opcional)
-                              <select
-                                value={pmMappingDraft.defaultRepositoryId}
-                                onChange={(event) =>
-                                  setPmMappingDraft((current) => ({
-                                    ...current,
-                                    defaultRepositoryId: event.target.value,
-                                  }))
-                                }
-                              >
-                                <option value="">Nenhum</option>
-                                {repositories
-                                  .filter(
-                                    (repo) =>
-                                      repo.organizationId ===
-                                      orgSetupSelectedId,
-                                  )
-                                  .map((repo) => (
-                                    <option key={repo.id} value={repo.id}>
-                                      {repo.name}
-                                    </option>
-                                  ))}
-                              </select>
-                            </label>
-                            <Button
-                              type="button"
-                              disabled={integrationBusy}
-                              onClick={() => void handleSavePmProjectMapping()}
-                            >
-                              Salvar mapeamento
-                            </Button>
-                          </div>
-                          {pmProjectMappings.length > 0 ? (
-                            <ul className="historyList">
-                              {pmProjectMappings.map((mapping) => (
-                                <li key={mapping.id}>
-                                  <strong>{mapping.externalProjectKey}</strong>
-                                  <span>
-                                    → {mapping.projectName ?? mapping.projectId}
-                                    {mapping.defaultRepositoryName
-                                      ? ` · repo ${mapping.defaultRepositoryName}`
-                                      : ""}
-                                  </span>
-                                </li>
-                              ))}
-                            </ul>
-                          ) : null}
+                              </ul>
+                            ) : (
+                              <p className="muted">
+                                Nenhum mapeamento salvo ainda.
+                              </p>
+                            )}
+                          </DetailSection>
                         </div>
 
                         <div className="orgIdentityInfoCard">
@@ -7810,103 +7084,87 @@ export function App() {
                                 : ""}
                             </p>
                           ) : null}
-                          <label>
-                            Site URL
-                            <input
-                              value={jiraSiteUrl}
-                              onChange={(event) =>
-                                setJiraSiteUrl(event.target.value)
-                              }
-                              placeholder="https://sua-empresa.atlassian.net"
-                            />
-                          </label>
-                          <label>
-                            Email
-                            <input
-                              type="email"
-                              value={jiraEmail}
-                              onChange={(event) =>
-                                setJiraEmail(event.target.value)
-                              }
-                              placeholder="voce@empresa.com"
-                            />
-                          </label>
-                          <label>
-                            API token
-                            <input
-                              type="password"
-                              value={jiraApiToken}
-                              onChange={(event) =>
-                                setJiraApiToken(event.target.value)
-                              }
-                              placeholder={
-                                getPmConnection("jira")?.hasCredentials
-                                  ? "Deixe vazio no teste para usar salvo"
-                                  : "Cole o token"
-                              }
-                            />
-                          </label>
+                          <SessionFieldInput
+                            label="Site URL"
+                            value={jiraSiteUrl}
+                            onChange={(event) =>
+                              setJiraSiteUrl(event.target.value)
+                            }
+                            placeholder="https://sua-empresa.atlassian.net"
+                          />
+                          <SessionFieldInput
+                            label="Email"
+                            type="email"
+                            value={jiraEmail}
+                            onChange={(event) =>
+                              setJiraEmail(event.target.value)
+                            }
+                            placeholder="voce@empresa.com"
+                          />
+                          <SessionFieldInput
+                            label="API token"
+                            type="password"
+                            value={jiraApiToken}
+                            onChange={(event) =>
+                              setJiraApiToken(event.target.value)
+                            }
+                            placeholder={
+                              getPmConnection("jira")?.hasCredentials
+                                ? "Deixe vazio no teste para usar salvo"
+                                : "Cole o token"
+                            }
+                          />
                           <div className="orgIntegrationFilterBlock">
                             <p className="muted orgIntegrationFilterTitle">
                               Filtros de sincronizacao
                             </p>
-                            <label className="backlogToggleArchived">
-                              <input
-                                type="checkbox"
-                                checked={jiraSyncFilter.focusCurrentWork}
-                                onChange={(event) =>
-                                  setJiraSyncFilter((current) => ({
-                                    ...current,
-                                    focusCurrentWork: event.target.checked,
-                                  }))
-                                }
-                              />
-                              Sprint aberta + atividade recente
-                            </label>
+                            <FieldCheckbox
+                              label="Sprint aberta + atividade recente"
+                              checked={jiraSyncFilter.focusCurrentWork}
+                              onCheckedChange={(checked) =>
+                                setJiraSyncFilter((current) => ({
+                                  ...current,
+                                  focusCurrentWork: checked,
+                                }))
+                              }
+                            />
                             {jiraSyncFilter.focusCurrentWork ? (
-                              <label>
-                                Ultimos (dias)
-                                <input
-                                  type="number"
-                                  min={1}
-                                  max={365}
-                                  value={jiraSyncFilter.updatedWithinDays}
-                                  onChange={(event) =>
-                                    setJiraSyncFilter((current) => ({
-                                      ...current,
-                                      updatedWithinDays:
-                                        Number(event.target.value) || 21,
-                                    }))
-                                  }
-                                />
-                              </label>
+                              <SessionFieldInput
+                                label="Ultimos (dias)"
+                                type="number"
+                                min={1}
+                                max={365}
+                                value={jiraSyncFilter.updatedWithinDays}
+                                onChange={(event) =>
+                                  setJiraSyncFilter((current) => ({
+                                    ...current,
+                                    updatedWithinDays:
+                                      Number(event.target.value) || 21,
+                                  }))
+                                }
+                              />
                             ) : null}
-                            <label className="backlogToggleArchived">
-                              <input
-                                type="checkbox"
-                                checked={jiraSyncFilter.includeClosed}
-                                onChange={(event) =>
-                                  setJiraSyncFilter((current) => ({
-                                    ...current,
-                                    includeClosed: event.target.checked,
-                                  }))
-                                }
-                              />
-                              Incluir fechadas
-                            </label>
-                            <label>
-                              JQL customizado (opcional)
-                              <input
-                                value={jiraSyncFilter.jql}
-                                onChange={(event) =>
-                                  setJiraSyncFilter((current) => ({
-                                    ...current,
-                                    jql: event.target.value,
-                                  }))
-                                }
-                                placeholder="Deixe vazio para o filtro padrao"
-                              />
-                            </label>
+                            <FieldCheckbox
+                              label="Incluir fechadas"
+                              checked={jiraSyncFilter.includeClosed}
+                              onCheckedChange={(checked) =>
+                                setJiraSyncFilter((current) => ({
+                                  ...current,
+                                  includeClosed: checked,
+                                }))
+                              }
+                            />
+                            <SessionFieldInput
+                              label="JQL customizado (opcional)"
+                              value={jiraSyncFilter.jql}
+                              onChange={(event) =>
+                                setJiraSyncFilter((current) => ({
+                                  ...current,
+                                  jql: event.target.value,
+                                }))
+                              }
+                              placeholder="Deixe vazio para o filtro padrao"
+                            />
                             <p className="muted orgIntegrationFilterPreview">
                               {describeJiraSyncFilter(jiraSyncFilter)}
                             </p>
@@ -8000,38 +7258,31 @@ export function App() {
                                 : ""}
                             </p>
                           ) : null}
-                          <label>
-                            API token
-                            <input
-                              type="password"
-                              value={clickUpApiToken}
-                              onChange={(event) =>
-                                setClickUpApiToken(event.target.value)
-                              }
-                              placeholder={
-                                getPmConnection("clickup")?.hasCredentials
-                                  ? "Deixe vazio no teste para usar salvo"
-                                  : "Cole o token e clique em Salvar"
-                              }
-                            />
-                          </label>
+                          <SessionFieldInput
+                            label="API token"
+                            type="password"
+                            value={clickUpApiToken}
+                            onChange={(event) =>
+                              setClickUpApiToken(event.target.value)
+                            }
+                            placeholder={
+                              getPmConnection("clickup")?.hasCredentials
+                                ? "Deixe vazio no teste para usar salvo"
+                                : "Cole o token e clique em Salvar"
+                            }
+                          />
                           {clickUpTeams.length > 0 ? (
-                            <label>
-                              Workspace (team)
-                              <select
-                                value={clickUpTeamId}
-                                onChange={(event) =>
-                                  setClickUpTeamId(event.target.value)
-                                }
-                              >
-                                <option value="">Selecione</option>
-                                {clickUpTeams.map((team) => (
-                                  <option key={team.id} value={team.id}>
-                                    {team.name}
-                                  </option>
-                                ))}
-                              </select>
-                            </label>
+                            <SessionFieldSelect
+                              label="Workspace (team)"
+                              value={clickUpTeamId}
+                              onValueChange={setClickUpTeamId}
+                              allowEmpty
+                              emptyLabel="Selecione"
+                              options={clickUpTeams.map((team) => ({
+                                value: team.id,
+                                label: team.name,
+                              }))}
+                            />
                           ) : (
                             <p className="muted">
                               Clique em Testar para carregar os workspaces.
@@ -8041,50 +7292,42 @@ export function App() {
                             <p className="muted orgIntegrationFilterTitle">
                               Filtros de sincronizacao
                             </p>
-                            <label className="backlogToggleArchived">
-                              <input
-                                type="checkbox"
-                                checked={clickUpSyncFilter.focusCurrentWork}
-                                onChange={(event) =>
-                                  setClickUpSyncFilter((current) => ({
-                                    ...current,
-                                    focusCurrentWork: event.target.checked,
-                                  }))
-                                }
-                              />
-                              Apenas tarefas com atividade recente
-                            </label>
+                            <FieldCheckbox
+                              label="Apenas tarefas com atividade recente"
+                              checked={clickUpSyncFilter.focusCurrentWork}
+                              onCheckedChange={(checked) =>
+                                setClickUpSyncFilter((current) => ({
+                                  ...current,
+                                  focusCurrentWork: checked,
+                                }))
+                              }
+                            />
                             {clickUpSyncFilter.focusCurrentWork ? (
-                              <label>
-                                Ultimos (dias)
-                                <input
-                                  type="number"
-                                  min={1}
-                                  max={365}
-                                  value={clickUpSyncFilter.updatedWithinDays}
-                                  onChange={(event) =>
-                                    setClickUpSyncFilter((current) => ({
-                                      ...current,
-                                      updatedWithinDays:
-                                        Number(event.target.value) || 21,
-                                    }))
-                                  }
-                                />
-                              </label>
-                            ) : null}
-                            <label className="backlogToggleArchived">
-                              <input
-                                type="checkbox"
-                                checked={clickUpSyncFilter.includeClosed}
+                              <SessionFieldInput
+                                label="Ultimos (dias)"
+                                type="number"
+                                min={1}
+                                max={365}
+                                value={clickUpSyncFilter.updatedWithinDays}
                                 onChange={(event) =>
                                   setClickUpSyncFilter((current) => ({
                                     ...current,
-                                    includeClosed: event.target.checked,
+                                    updatedWithinDays:
+                                      Number(event.target.value) || 21,
                                   }))
                                 }
                               />
-                              Incluir fechadas
-                            </label>
+                            ) : null}
+                            <FieldCheckbox
+                              label="Incluir fechadas"
+                              checked={clickUpSyncFilter.includeClosed}
+                              onCheckedChange={(checked) =>
+                                setClickUpSyncFilter((current) => ({
+                                  ...current,
+                                  includeClosed: checked,
+                                }))
+                              }
+                            />
                             {getPmConnection("clickup") ? (
                               <Button
                                 type="button"
@@ -8163,12 +7406,12 @@ export function App() {
                   </StatusAlert>
                 )}
               </div>
-            </div>
-          </section>
+            </SplitLayout>
+          </OrganizationsView>
         ) : null}
 
         {activeView === "repos" ? (
-          <section className="panel repoPanel">
+          <ReposView>
             <div className="repoHeader">
               <div className="panelHeading">
                 <h2>Seus projetos</h2>
@@ -8233,29 +7476,25 @@ export function App() {
                 </div>
               ) : null}
 
-              <div className="contextStepContent">
-                {contextStep === 1 ? (
+              {contextStep === 1 ? (
+                <div className="contextStepContent">
                   <>
                     <div className="historyFilterRow">
-                      <label>
-                        Empresa
-                        <select
-                          value={selectedOrganizationId}
-                          onChange={(event) =>
-                            handleOrganizationChange(event.target.value)
-                          }
-                        >
-                          <option value="all">Selecione uma empresa</option>
-                          {organizations.map((organization) => (
-                            <option
-                              key={organization.id}
-                              value={organization.id}
-                            >
-                              {organization.name}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
+                      <SessionFieldSelect
+                        label="Empresa"
+                        value={selectedOrganizationId}
+                        onValueChange={handleOrganizationChange}
+                        options={[
+                          {
+                            value: "all",
+                            label: "Selecione uma empresa",
+                          },
+                          ...organizations.map((organization) => ({
+                            value: organization.id,
+                            label: organization.name,
+                          })),
+                        ]}
+                      />
                     </div>
 
                     {selectedOrganization ? (
@@ -8347,199 +7586,132 @@ export function App() {
                       </Button>
                     </div>
                   </>
-                ) : null}
+                </div>
+              ) : (
+                <div className="reposWizardLayout">
+                  <aside className="reposWizardSidebar">
+                    <div className="repoList grid gap-3">
+                      <SectionTitle icon={FolderGit2}>
+                        Repositorios por empresa
+                      </SectionTitle>
+                      <ScrollArea className="h-[min(56vh,560px)] pr-2">
+                        {groupedRepositories.map((group) => (
+                          <div
+                            key={group.organizationName}
+                            className="repoGroup"
+                          >
+                            <p className="repoGroupTitle">
+                              <OrganizationAvatar
+                                name={group.organizationName}
+                                kind={
+                                  findOrganizationById(group.organizationId)
+                                    ?.kind
+                                }
+                                logoUrl={getOrganizationLogoUrl(
+                                  group.organizationId,
+                                )}
+                                size="sm"
+                              />
+                              <span>{group.organizationName}</span>
+                            </p>
+                            {group.repositories.map((repository) => (
+                              <SelectableListItem
+                                key={repository.id}
+                                active={selectedRepoId === repository.id}
+                                onClick={() =>
+                                  handleSelectRepository(repository)
+                                }
+                                title={repository.name}
+                                subtitle={formatRepositoryContextLine(
+                                  repository,
+                                )}
+                              >
+                                {repository.providerHost ??
+                                  "Servico nao informado"}
+                              </SelectableListItem>
+                            ))}
+                          </div>
+                        ))}
+                      </ScrollArea>
+                    </div>
+                  </aside>
 
-                {contextStep === 2 ? (
-                  <>
-                    <p className="muted contextOrgLine">
-                      <OrganizationAvatar
-                        name={selectedOrganization?.name ?? "Empresa"}
-                        kind={selectedOrganization?.kind}
-                        logoUrl={getOrganizationLogoUrl(
-                          selectedOrganization?.id,
-                        )}
-                        size="sm"
-                      />
-                      <span>
-                        Empresa:{" "}
-                        <strong>
-                          {selectedOrganization?.name ?? "Nao selecionada"}
-                        </strong>
-                      </span>
-                    </p>
+                  <div className="contextStepContent reposWizardMain">
+                    {!selectedRepo ? (
+                      <StatusAlert status="warning" title="Escolha um projeto">
+                        Selecione um repositorio na lista ao lado para continuar
+                        o fluxo.
+                      </StatusAlert>
+                    ) : null}
 
-                    <div className="addProjectPanel">
-                      <div className="panelHeading">
-                        <h4 className="subheading">
-                          Adicionar repositorio local
-                        </h4>
-                        <p className="muted">
-                          Aponte para uma pasta Git real da sua maquina para
-                          conseguir conferir o ambiente.
-                        </p>
-                      </div>
-
-                      {!showAddProjectForm ? (
-                        <Button
-                          type="button"
-                          variant="outline"
-                          onClick={() => {
-                            resetAddProjectForm();
-                            setShowAddProjectForm(true);
-                          }}
-                        >
-                          Cadastrar pasta Git
-                        </Button>
-                      ) : (
-                        <div className="sessionForm compactForm">
-                          <LocalPathField
-                            path={newProjectPath}
-                            inspecting={newProjectInspecting}
-                            onPathChange={(value) => {
-                              setNewProjectPath(value);
-                              setNewProjectInspection(null);
-                              setNewProjectError(null);
-                            }}
-                            onBrowse={() => void browseNewProjectPath()}
-                            onInspect={() => void inspectNewProjectPath()}
+                    {contextStep === 2 ? (
+                      <>
+                        <p className="muted contextOrgLine">
+                          <OrganizationAvatar
+                            name={selectedOrganization?.name ?? "Empresa"}
+                            kind={selectedOrganization?.kind}
+                            logoUrl={getOrganizationLogoUrl(
+                              selectedOrganization?.id,
+                            )}
+                            size="sm"
                           />
-                          <label>
-                            Projeto (opcional)
-                            <select
-                              value={newRepoProjectId}
-                              onChange={(event) =>
-                                setNewRepoProjectId(event.target.value)
-                              }
-                            >
-                              <option value="">Sem projeto</option>
-                              {projects
-                                .filter(
-                                  (project) =>
-                                    project.organizationId ===
-                                    selectedOrganizationId,
-                                )
-                                .map((project) => (
-                                  <option key={project.id} value={project.id}>
-                                    {project.name}
-                                  </option>
-                                ))}
-                            </select>
-                          </label>
-                          <label>
-                            Nome do repositorio
-                            <input
-                              value={newProjectName}
-                              onChange={(event) =>
-                                setNewProjectName(event.target.value)
-                              }
-                              placeholder="auth-api"
-                            />
-                          </label>
-                          <label>
-                            Remoto (opcional)
-                            <input
-                              value={newProjectRemoteUrl}
-                              onChange={(event) =>
-                                setNewProjectRemoteUrl(event.target.value)
-                              }
-                              placeholder="git@host:org/repo.git"
-                            />
-                          </label>
+                          <span>
+                            Empresa:{" "}
+                            <strong>
+                              {selectedOrganization?.name ?? "Nao selecionada"}
+                            </strong>
+                          </span>
+                        </p>
 
-                          {newProjectIdentityWarning ? (
-                            <StatusAlert
-                              status="warning"
-                              title="Identidade local diferente"
-                            >
-                              {newProjectIdentityWarning}
-                            </StatusAlert>
-                          ) : null}
+                        <div className="addProjectPanel addProjectPanelCompact">
+                          <div className="panelHeading">
+                            <h4 className="subheading">
+                              Adicionar repositorio local
+                            </h4>
+                            <p className="muted">
+                              Aponte para uma pasta Git real da sua maquina para
+                              conseguir conferir o ambiente.
+                            </p>
+                          </div>
 
-                          {newProjectInspection?.isGitRepo ? (
-                            <StatusAlert
-                              status="ok"
-                              title="Repositorio Git detectado"
-                            >
-                              {newProjectInspection.remoteUrl ??
-                                "Sem remote.origin.url configurado"}
-                              {newProjectInspection.defaultBranch
-                                ? ` · branch ${newProjectInspection.defaultBranch}`
-                                : ""}
-                            </StatusAlert>
-                          ) : null}
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="shrink-0"
+                            onClick={() => {
+                              resetAddProjectForm();
+                              setAddRepoDialogOpen(true);
+                            }}
+                          >
+                            Cadastrar pasta Git
+                          </Button>
+                        </div>
 
-                          {newProjectError ? (
-                            <p className="errorText">{newProjectError}</p>
-                          ) : null}
+                        {selectedRepo ? (
+                          <div className="addProjectPanel addProjectPanelCompact">
+                            <div className="panelHeading">
+                              <h4 className="subheading">
+                                Pasta local do repositorio
+                              </h4>
+                              <p className="muted">
+                                Ajuste o caminho se o repositorio mudou de pasta
+                                ou ainda aponta para um seed de exemplo.
+                              </p>
+                            </div>
 
-                          <div className="actionRow">
                             <Button
                               type="button"
                               variant="outline"
+                              className="shrink-0 self-end"
                               onClick={() => {
-                                setShowAddProjectForm(false);
-                                resetAddProjectForm();
+                                resetEditProjectPathForm(selectedRepo);
+                                setEditRepoPathDialogOpen(true);
                               }}
                             >
-                              Cancelar
+                              Alterar pasta local
                             </Button>
-                            <Button
-                              type="button"
-                              onClick={() => void handleCreateProject()}
-                              disabled={
-                                newProjectSaving ||
-                                !newProjectName.trim() ||
-                                !newProjectPath.trim() ||
-                                !newProjectInspection?.isGitRepo
-                              }
-                            >
-                              {newProjectSaving
-                                ? "Salvando..."
-                                : "Salvar repositorio"}
-                            </Button>
-                          </div>
-                        </div>
-                      )}
-                    </div>
 
-                    <p className="contextSectionLabel">
-                      Repositorios cadastrados
-                    </p>
-                    <div className="contextRepoPicker">
-                      {contextOrganizationRepos.length > 0 ? (
-                        contextOrganizationRepos.map((repository) => (
-                          <SelectableListItem
-                            key={repository.id}
-                            active={selectedRepoId === repository.id}
-                            onClick={() => handleSelectRepository(repository)}
-                            title={repository.name}
-                            subtitle={formatRepositoryContextLine(repository)}
-                          >
-                            {repository.providerHost ?? "Servico nao informado"}
-                          </SelectableListItem>
-                        ))
-                      ) : (
-                        <StatusAlert status="warning" title="Sem repositorios">
-                          Nenhum repositorio cadastrado para esta empresa.
-                        </StatusAlert>
-                      )}
-                    </div>
-
-                    {selectedRepo ? (
-                      <div className="addProjectPanel">
-                        <div className="panelHeading">
-                          <h4 className="subheading">
-                            Pasta local do repositorio
-                          </h4>
-                          <p className="muted">
-                            Ajuste o caminho se o repositorio mudou de pasta ou
-                            ainda aponta para um seed de exemplo.
-                          </p>
-                        </div>
-
-                        {!showEditProjectPathForm ? (
-                          <>
-                            <div className="contextIdentityCard">
+                            <div className="contextIdentityCard addProjectPanelMeta">
                               <article>
                                 <span>Repositorio selecionado</span>
                                 <strong>{selectedRepo.name}</strong>
@@ -8558,416 +7730,301 @@ export function App() {
                                 {selectedRepoPathIssue}
                               </StatusAlert>
                             ) : null}
+                          </div>
+                        ) : null}
 
+                        <div className="actionRow">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => setContextStep(1)}
+                          >
+                            Voltar
+                          </Button>
+                          <Button
+                            type="button"
+                            disabled={!selectedRepoId}
+                            onClick={() => setContextStep(3)}
+                          >
+                            Continuar para conferir
+                          </Button>
+                        </div>
+                      </>
+                    ) : null}
+
+                    {contextStep === 3 ? (
+                      <>
+                        <p className="muted">
+                          Conferindo:{" "}
+                          <strong>
+                            {selectedRepo?.name ?? "Nenhum projeto"}
+                          </strong>
+                        </p>
+
+                        {selectedRepoPathIssue ? (
+                          <StatusAlert
+                            status="warning"
+                            title="Pasta local indisponivel"
+                          >
+                            {selectedRepoPathIssue}
+                            {" — "}
+                            Volte ao passo Projeto e cadastre uma pasta Git
+                            real, ou escolha outro repositorio.
+                          </StatusAlert>
+                        ) : null}
+
+                        {repoError ? (
+                          <p className="errorText">{repoError}</p>
+                        ) : null}
+
+                        <ul className="contextChecklist">
+                          {contextSwitchChecks.map((check) => (
+                            <li
+                              key={check.id}
+                              className={`contextCheckItem contextCheckItem-${check.status}`}
+                            >
+                              <strong>{check.label}</strong>
+                              <span>{check.message}</span>
+                            </li>
+                          ))}
+                        </ul>
+                        <div className="actionRow">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => setContextStep(2)}
+                          >
+                            Voltar
+                          </Button>
+                          <Button
+                            type="button"
+                            onClick={() => void refreshRepositoryContext(true)}
+                            disabled={
+                              refreshingRepo ||
+                              !selectedRepo?.localPath ||
+                              Boolean(selectedRepoPathIssue)
+                            }
+                          >
+                            {refreshingRepo
+                              ? "Conferindo..."
+                              : "Conferir ambiente"}
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            disabled={!selectedValidation}
+                            onClick={() => setContextStep(4)}
+                          >
+                            Continuar
+                          </Button>
+                        </div>
+                      </>
+                    ) : null}
+
+                    {contextStep === 4 ? (
+                      <>
+                        {selectedValidation ? (
+                          <StatusAlert
+                            status={selectedValidation.status}
+                            title={formatValidationStatus(
+                              selectedValidation.status,
+                            )}
+                          >
+                            Resultado da conferencia local
+                          </StatusAlert>
+                        ) : (
+                          <StatusAlert
+                            status="warning"
+                            title="Conferencia pendente"
+                          >
+                            Volte ao passo anterior e confira o ambiente.
+                          </StatusAlert>
+                        )}
+                        <ul className="contextChecklist">
+                          {selectedValidation?.checks.map((check) => (
+                            <li
+                              key={check.key}
+                              className={`contextCheckItem contextCheckItem-${check.status}`}
+                            >
+                              <strong>{humanizeCheckKey(check.key)}</strong>
+                              <span>{formatValidationCheckDetail(check)}</span>
+                            </li>
+                          )) ?? null}
+                        </ul>
+                        <div className="actionRow">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => setContextStep(3)}
+                          >
+                            Voltar
+                          </Button>
+                          <Button
+                            type="button"
+                            onClick={() => void handleApplyIdentity()}
+                            disabled={
+                              applyingIdentity ||
+                              preparingContext ||
+                              !selectedRepo?.localPath
+                            }
+                          >
+                            {applyingIdentity
+                              ? "Aplicando..."
+                              : "Ajustar identidade Git"}
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            disabled={!selectedValidation}
+                            onClick={() => setContextStep(5)}
+                          >
+                            Continuar
+                          </Button>
+                        </div>
+                      </>
+                    ) : null}
+
+                    {contextStep === 5 ? (
+                      <>
+                        <StatusAlert
+                          status={hookStatus?.managedByApp ? "ok" : "warning"}
+                          title="Protecao antes do push"
+                        >
+                          {!hookStatus?.installed
+                            ? "Nenhum hook pre-push instalado ainda."
+                            : hookStatus.managedByApp
+                              ? "Hook pre-push ativo e gerenciado pelo app."
+                              : "Ha um hook pre-push manual neste projeto."}
+                        </StatusAlert>
+                        <div className="actionRow">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => setContextStep(4)}
+                          >
+                            Voltar
+                          </Button>
+                          <Button
+                            type="button"
+                            onClick={() => void handleInstallPrePushHook()}
+                            disabled={
+                              installingHook ||
+                              preparingContext ||
+                              !selectedRepo?.localPath ||
+                              hookStatus?.managedByApp
+                            }
+                          >
+                            {installingHook
+                              ? "Instalando..."
+                              : hookStatus?.managedByApp
+                                ? "Protecao ativa"
+                                : "Instalar protecao"}
+                          </Button>
+                          {hookStatus?.managedByApp ? (
                             <Button
                               type="button"
                               variant="outline"
-                              onClick={() => {
-                                resetEditProjectPathForm(selectedRepo);
-                                setShowEditProjectPathForm(true);
-                              }}
+                              onClick={() => void handleRemovePrePushHook()}
+                              disabled={removingHook || preparingContext}
                             >
-                              Alterar pasta local
+                              {removingHook
+                                ? "Removendo..."
+                                : "Remover protecao"}
                             </Button>
-                          </>
-                        ) : (
-                          <div className="sessionForm compactForm">
-                            <LocalPathField
-                              path={editProjectPath}
-                              inspecting={editProjectInspecting}
-                              onPathChange={(value) => {
-                                setEditProjectPath(value);
-                                setEditProjectInspection(null);
-                                setEditProjectError(null);
-                              }}
-                              onBrowse={() => void browseEditProjectPath()}
-                              onInspect={() => void inspectEditProjectPath()}
-                            />
-                            <label>
-                              Remoto (opcional)
-                              <input
-                                value={editProjectRemoteUrl}
-                                onChange={(event) =>
-                                  setEditProjectRemoteUrl(event.target.value)
-                                }
-                                placeholder="git@host:org/repo.git"
-                              />
-                            </label>
-
-                            {editProjectInspection?.isGitRepo ? (
-                              <StatusAlert
-                                status="ok"
-                                title="Repositorio Git detectado"
-                              >
-                                {editProjectInspection.remoteUrl ??
-                                  "Sem remote.origin.url configurado"}
-                                {editProjectInspection.defaultBranch
-                                  ? ` · branch ${editProjectInspection.defaultBranch}`
-                                  : ""}
-                              </StatusAlert>
-                            ) : null}
-
-                            {editProjectError ? (
-                              <p className="errorText">{editProjectError}</p>
-                            ) : null}
-
-                            <div className="actionRow">
-                              <Button
-                                type="button"
-                                variant="outline"
-                                onClick={() => {
-                                  setShowEditProjectPathForm(false);
-                                  resetEditProjectPathForm(selectedRepo);
-                                }}
-                              >
-                                Cancelar
-                              </Button>
-                              <Button
-                                type="button"
-                                onClick={() => void handleUpdateProjectPath()}
-                                disabled={
-                                  editProjectSaving ||
-                                  !editProjectPath.trim() ||
-                                  !editProjectInspection?.isGitRepo
-                                }
-                              >
-                                {editProjectSaving
-                                  ? "Salvando..."
-                                  : "Salvar pasta local"}
-                              </Button>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    ) : null}
-
-                    <div className="actionRow">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={() => setContextStep(1)}
-                      >
-                        Voltar
-                      </Button>
-                      <Button
-                        type="button"
-                        disabled={!selectedRepoId}
-                        onClick={() => setContextStep(3)}
-                      >
-                        Continuar para conferir
-                      </Button>
-                    </div>
-                  </>
-                ) : null}
-
-                {contextStep === 3 ? (
-                  <>
-                    <p className="muted">
-                      Conferindo:{" "}
-                      <strong>{selectedRepo?.name ?? "Nenhum projeto"}</strong>
-                    </p>
-
-                    {selectedRepoPathIssue ? (
-                      <StatusAlert
-                        status="warning"
-                        title="Pasta local indisponivel"
-                      >
-                        {selectedRepoPathIssue}
-                        {" — "}
-                        Volte ao passo Projeto e cadastre uma pasta Git real, ou
-                        escolha outro repositorio.
-                      </StatusAlert>
-                    ) : null}
-
-                    {repoError ? (
-                      <p className="errorText">{repoError}</p>
-                    ) : null}
-
-                    <ul className="contextChecklist">
-                      {contextSwitchChecks.map((check) => (
-                        <li
-                          key={check.id}
-                          className={`contextCheckItem contextCheckItem-${check.status}`}
-                        >
-                          <strong>{check.label}</strong>
-                          <span>{check.message}</span>
-                        </li>
-                      ))}
-                    </ul>
-                    <div className="actionRow">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={() => setContextStep(2)}
-                      >
-                        Voltar
-                      </Button>
-                      <Button
-                        type="button"
-                        onClick={() => void refreshRepositoryContext(true)}
-                        disabled={
-                          refreshingRepo ||
-                          !selectedRepo?.localPath ||
-                          Boolean(selectedRepoPathIssue)
-                        }
-                      >
-                        {refreshingRepo ? "Conferindo..." : "Conferir ambiente"}
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        disabled={!selectedValidation}
-                        onClick={() => setContextStep(4)}
-                      >
-                        Continuar
-                      </Button>
-                    </div>
-                  </>
-                ) : null}
-
-                {contextStep === 4 ? (
-                  <>
-                    {selectedValidation ? (
-                      <StatusAlert
-                        status={selectedValidation.status}
-                        title={formatValidationStatus(
-                          selectedValidation.status,
-                        )}
-                      >
-                        Resultado da conferencia local
-                      </StatusAlert>
-                    ) : (
-                      <StatusAlert
-                        status="warning"
-                        title="Conferencia pendente"
-                      >
-                        Volte ao passo anterior e confira o ambiente.
-                      </StatusAlert>
-                    )}
-                    <ul className="contextChecklist">
-                      {selectedValidation?.checks.map((check) => (
-                        <li
-                          key={check.key}
-                          className={`contextCheckItem contextCheckItem-${check.status}`}
-                        >
-                          <strong>{humanizeCheckKey(check.key)}</strong>
-                          <span>{formatValidationCheckDetail(check)}</span>
-                        </li>
-                      )) ?? null}
-                    </ul>
-                    <div className="actionRow">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={() => setContextStep(3)}
-                      >
-                        Voltar
-                      </Button>
-                      <Button
-                        type="button"
-                        onClick={() => void handleApplyIdentity()}
-                        disabled={
-                          applyingIdentity ||
-                          preparingContext ||
-                          !selectedRepo?.localPath
-                        }
-                      >
-                        {applyingIdentity
-                          ? "Aplicando..."
-                          : "Ajustar identidade Git"}
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        disabled={!selectedValidation}
-                        onClick={() => setContextStep(5)}
-                      >
-                        Continuar
-                      </Button>
-                    </div>
-                  </>
-                ) : null}
-
-                {contextStep === 5 ? (
-                  <>
-                    <StatusAlert
-                      status={hookStatus?.managedByApp ? "ok" : "warning"}
-                      title="Protecao antes do push"
-                    >
-                      {!hookStatus?.installed
-                        ? "Nenhum hook pre-push instalado ainda."
-                        : hookStatus.managedByApp
-                          ? "Hook pre-push ativo e gerenciado pelo app."
-                          : "Ha um hook pre-push manual neste projeto."}
-                    </StatusAlert>
-                    <div className="actionRow">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={() => setContextStep(4)}
-                      >
-                        Voltar
-                      </Button>
-                      <Button
-                        type="button"
-                        onClick={() => void handleInstallPrePushHook()}
-                        disabled={
-                          installingHook ||
-                          preparingContext ||
-                          !selectedRepo?.localPath ||
-                          hookStatus?.managedByApp
-                        }
-                      >
-                        {installingHook
-                          ? "Instalando..."
-                          : hookStatus?.managedByApp
-                            ? "Protecao ativa"
-                            : "Instalar protecao"}
-                      </Button>
-                      {hookStatus?.managedByApp ? (
-                        <Button
-                          type="button"
-                          variant="outline"
-                          onClick={() => void handleRemovePrePushHook()}
-                          disabled={removingHook || preparingContext}
-                        >
-                          {removingHook ? "Removendo..." : "Remover protecao"}
-                        </Button>
-                      ) : null}
-                      <Button
-                        type="button"
-                        variant="outline"
-                        disabled={!hookStatus?.managedByApp}
-                        onClick={() => setContextStep(6)}
-                      >
-                        Continuar
-                      </Button>
-                    </div>
-                  </>
-                ) : null}
-
-                {contextStep === 6 ? (
-                  <>
-                    <StatusAlert status="ok" title="Contexto preparado">
-                      <span className="contextReadySummary">
-                        {selectedOrganization ? (
-                          <OrganizationAvatar
-                            name={selectedOrganization.name}
-                            kind={selectedOrganization.kind}
-                            logoUrl={getOrganizationLogoUrl(
-                              selectedOrganization.id,
-                            )}
-                            size="sm"
-                          />
-                        ) : selectedRepo?.organizationId ? (
-                          <OrganizationAvatar
-                            name={
-                              findOrganizationById(selectedRepo.organizationId)
-                                ?.name ??
-                              selectedRepo.organizationName ??
-                              "Empresa"
-                            }
-                            kind={
-                              findOrganizationById(selectedRepo.organizationId)
-                                ?.kind
-                            }
-                            logoUrl={getOrganizationLogoUrl(
-                              selectedRepo.organizationId,
-                            )}
-                            size="sm"
-                          />
-                        ) : null}
-                        <span>
-                          {selectedOrganization?.name ??
-                            selectedRepo?.organizationName}
-                          {" · "}
-                          {selectedRepo?.name ?? "projeto"}
-                        </span>
-                      </span>
-                    </StatusAlert>
-                    <ul className="contextChecklist">
-                      {contextSwitchChecks.map((check) => (
-                        <li
-                          key={`ready-${check.id}`}
-                          className={`contextCheckItem contextCheckItem-${check.status}`}
-                        >
-                          <strong>{check.label}</strong>
-                          <span>{check.message}</span>
-                        </li>
-                      ))}
-                    </ul>
-                    <div className="actionRow">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={() => setContextStep(5)}
-                      >
-                        Revisar protecao
-                      </Button>
-                      <Button
-                        type="button"
-                        onClick={() => void handlePrepareContext()}
-                        disabled={
-                          preparingContext ||
-                          applyingIdentity ||
-                          installingHook ||
-                          refreshingRepo ||
-                          !selectedRepo?.localPath
-                        }
-                      >
-                        {preparingContext
-                          ? "Preparando..."
-                          : "Repreparar contexto"}
-                      </Button>
-                    </div>
-                  </>
-                ) : null}
-              </div>
-            </section>
-
-            <div className="repoLayout">
-              {contextStep >= 2 ? (
-                <>
-                  <aside className="repoList">
-                    <SectionTitle icon={FolderGit2}>
-                      Repositorios por empresa
-                    </SectionTitle>
-                    {groupedRepositories.map((group) => (
-                      <div key={group.organizationName} className="repoGroup">
-                        <p className="repoGroupTitle">
-                          <OrganizationAvatar
-                            name={group.organizationName}
-                            kind={
-                              findOrganizationById(group.organizationId)?.kind
-                            }
-                            logoUrl={getOrganizationLogoUrl(
-                              group.organizationId,
-                            )}
-                            size="sm"
-                          />
-                          <span>{group.organizationName}</span>
-                        </p>
-                        {group.repositories.map((repository) => (
-                          <SelectableListItem
-                            key={repository.id}
-                            active={
-                              selectedRepoId === repository.id &&
-                              contextStep >= 2
-                            }
-                            onClick={() => handleSelectRepository(repository)}
-                            title={repository.name}
-                            subtitle={formatRepositoryContextLine(repository)}
+                          ) : null}
+                          <Button
+                            type="button"
+                            variant="outline"
+                            disabled={!hookStatus?.managedByApp}
+                            onClick={() => setContextStep(6)}
                           >
-                            {repository.providerHost ?? "Servico nao informado"}
-                          </SelectableListItem>
-                        ))}
-                      </div>
-                    ))}
-                  </aside>
+                            Continuar
+                          </Button>
+                        </div>
+                      </>
+                    ) : null}
 
-                  <div className="repoDetails">
-                    {selectedRepo ? (
+                    {contextStep === 6 ? (
                       <>
+                        <StatusAlert status="ok" title="Contexto preparado">
+                          <span className="contextReadySummary">
+                            {selectedOrganization ? (
+                              <OrganizationAvatar
+                                name={selectedOrganization.name}
+                                kind={selectedOrganization.kind}
+                                logoUrl={getOrganizationLogoUrl(
+                                  selectedOrganization.id,
+                                )}
+                                size="sm"
+                              />
+                            ) : selectedRepo?.organizationId ? (
+                              <OrganizationAvatar
+                                name={
+                                  findOrganizationById(
+                                    selectedRepo.organizationId,
+                                  )?.name ??
+                                  selectedRepo.organizationName ??
+                                  "Empresa"
+                                }
+                                kind={
+                                  findOrganizationById(
+                                    selectedRepo.organizationId,
+                                  )?.kind
+                                }
+                                logoUrl={getOrganizationLogoUrl(
+                                  selectedRepo.organizationId,
+                                )}
+                                size="sm"
+                              />
+                            ) : null}
+                            <span>
+                              {selectedOrganization?.name ??
+                                selectedRepo?.organizationName}
+                              {" · "}
+                              {selectedRepo?.name ?? "projeto"}
+                            </span>
+                          </span>
+                        </StatusAlert>
+                        <ul className="contextChecklist">
+                          {contextSwitchChecks.map((check) => (
+                            <li
+                              key={`ready-${check.id}`}
+                              className={`contextCheckItem contextCheckItem-${check.status}`}
+                            >
+                              <strong>{check.label}</strong>
+                              <span>{check.message}</span>
+                            </li>
+                          ))}
+                        </ul>
+                        <div className="actionRow">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => setContextStep(5)}
+                          >
+                            Revisar protecao
+                          </Button>
+                          <Button
+                            type="button"
+                            onClick={() => void handlePrepareContext()}
+                            disabled={
+                              preparingContext ||
+                              applyingIdentity ||
+                              installingHook ||
+                              refreshingRepo ||
+                              !selectedRepo?.localPath
+                            }
+                          >
+                            {preparingContext
+                              ? "Preparando..."
+                              : "Repreparar contexto"}
+                          </Button>
+                        </div>
+                      </>
+                    ) : null}
+
+                    {contextStep === 6 && selectedRepo ? (
+                      <div className="repoDetails reposWizardDetails">
                         <div className="repoDetailHeader">
                           <div className="panelHeading">
                             <h3 className="subheading">{selectedRepo.name}</h3>
@@ -9006,189 +8063,161 @@ export function App() {
                           </article>
                         </div>
 
-                        {contextStep >= 6 ? (
+                        {repoLoading ? (
+                          <StatusAlert status="warning" title="Conferindo...">
+                            Validando o ambiente deste projeto.
+                          </StatusAlert>
+                        ) : selectedValidation ? (
                           <>
-                            {repoLoading ? (
-                              <StatusAlert
-                                status="warning"
-                                title="Conferindo..."
-                              >
-                                Validando o ambiente deste projeto.
-                              </StatusAlert>
-                            ) : selectedValidation ? (
-                              <>
-                                <StatusAlert
-                                  status={selectedValidation.status}
-                                  title={formatValidationStatus(
-                                    selectedValidation.status,
-                                  )}
-                                >
-                                  Conferencia da identidade local
-                                </StatusAlert>
-                                <ul className="checkList">
-                                  {selectedValidation.checks.map((check) => (
-                                    <li key={check.key}>
-                                      <strong>
-                                        {humanizeCheckKey(check.key)}
-                                      </strong>
-                                      <span>
-                                        {formatValidationCheckDetail(check)}
-                                      </span>
-                                    </li>
-                                  ))}
-                                </ul>
-                              </>
-                            ) : (
-                              <StatusAlert
-                                status="warning"
-                                title="Ainda sem conferencia"
-                              >
-                                Este projeto ainda nao tem dados Git suficientes
-                                para validar.
-                              </StatusAlert>
-                            )}
-
                             <StatusAlert
-                              status={
-                                hookStatus?.installed && hookStatus.managedByApp
-                                  ? "ok"
-                                  : "warning"
-                              }
-                              title="Protecao antes do push"
+                              status={selectedValidation.status}
+                              title={formatValidationStatus(
+                                selectedValidation.status,
+                              )}
                             >
-                              <div className="grid gap-2">
-                                <span>
-                                  {!hookStatus?.installed
-                                    ? "Nenhum hook pre-push instalado ainda."
-                                    : hookStatus.managedByApp
-                                      ? "Hook pre-push ativo e gerenciado pelo app."
-                                      : "Ha um hook pre-push manual neste projeto."}
-                                </span>
-                                {hookStatus?.installed &&
-                                !hookStatus.managedByApp ? (
-                                  <code className="text-xs">
-                                    O app nao altera hooks que voce instalou
-                                    manualmente.
-                                  </code>
-                                ) : null}
-                                {hookStatus?.hookPath ? (
-                                  <code className="text-xs">
-                                    {hookStatus.hookPath}
-                                  </code>
-                                ) : null}
-                              </div>
+                              Conferencia da identidade local
                             </StatusAlert>
-
-                            <div className="actionRow">
-                              <Button
-                                type="button"
-                                variant="outline"
-                                onClick={() => refreshRepositoryContext(true)}
-                                disabled={
-                                  refreshingRepo || !selectedRepo.localPath
-                                }
-                              >
-                                {refreshingRepo
-                                  ? "Conferindo..."
-                                  : "Conferir ambiente"}
-                              </Button>
-                              <Button
-                                type="button"
-                                variant="outline"
-                                onClick={handleInstallPrePushHook}
-                                disabled={
-                                  installingHook ||
-                                  removingHook ||
-                                  refreshingRepo ||
-                                  !selectedRepo.localPath
-                                }
-                              >
-                                {installingHook
-                                  ? "Instalando..."
-                                  : hookStatus?.managedByApp
-                                    ? "Reparar protecao"
-                                    : "Instalar protecao"}
-                              </Button>
-                              {hookStatus?.managedByApp ? (
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  onClick={handleRemovePrePushHook}
-                                  disabled={
-                                    removingHook ||
-                                    installingHook ||
-                                    refreshingRepo ||
-                                    !selectedRepo.localPath
-                                  }
-                                >
-                                  {removingHook
-                                    ? "Removendo..."
-                                    : "Remover protecao"}
-                                </Button>
-                              ) : null}
-                              <Button
-                                type="button"
-                                onClick={handleApplyIdentity}
-                                disabled={
-                                  applyingIdentity ||
-                                  removingHook ||
-                                  refreshingRepo ||
-                                  !selectedRepo.localPath
-                                }
-                              >
-                                {applyingIdentity
-                                  ? "Aplicando..."
-                                  : "Ajustar identidade Git"}
-                              </Button>
-                            </div>
-
-                            <h3 className="subheading">Checklist detalhado</h3>
-                            <ul className="contextChecklist">
-                              {contextSwitchChecks.map((check) => (
-                                <li
-                                  key={`detail-${check.id}`}
-                                  className={`contextCheckItem contextCheckItem-${check.status}`}
-                                >
-                                  <strong>{check.label}</strong>
-                                  <span>{check.message}</span>
+                            <ul className="checkList">
+                              {selectedValidation.checks.map((check) => (
+                                <li key={check.key}>
+                                  <strong>{humanizeCheckKey(check.key)}</strong>
+                                  <span>
+                                    {formatValidationCheckDetail(check)}
+                                  </span>
                                 </li>
                               ))}
                             </ul>
+                          </>
+                        ) : (
+                          <StatusAlert
+                            status="warning"
+                            title="Ainda sem conferencia"
+                          >
+                            Este projeto ainda nao tem dados Git suficientes
+                            para validar.
+                          </StatusAlert>
+                        )}
 
-                            <h3 className="subheading">Anotacoes do projeto</h3>
-                            <div className="sessionForm compactForm">
-                              <label>
-                                Titulo
-                                <input
-                                  value={repoNoteTitle}
-                                  onChange={(event) =>
-                                    setRepoNoteTitle(event.target.value)
-                                  }
-                                  placeholder="Padrao, comando util ou problema recorrente"
-                                />
-                              </label>
-                              <label>
-                                Conteudo
-                                <Textarea
-                                  value={repoNoteContent}
-                                  onChange={(event) =>
-                                    setRepoNoteContent(event.target.value)
-                                  }
-                                  placeholder="Ex.: rodar migrate antes do worker subir em dev"
-                                />
-                              </label>
-                              <div className="actionRow">
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  onClick={handleSaveRepositoryNote}
-                                  disabled={contextBusy}
-                                >
-                                  Salvar anotacao
-                                </Button>
-                              </div>
-                            </div>
+                        <StatusAlert
+                          status={
+                            hookStatus?.installed && hookStatus.managedByApp
+                              ? "ok"
+                              : "warning"
+                          }
+                          title="Protecao antes do push"
+                        >
+                          <div className="grid gap-2">
+                            <span>
+                              {!hookStatus?.installed
+                                ? "Nenhum hook pre-push instalado ainda."
+                                : hookStatus.managedByApp
+                                  ? "Hook pre-push ativo e gerenciado pelo app."
+                                  : "Ha um hook pre-push manual neste projeto."}
+                            </span>
+                            {hookStatus?.installed &&
+                            !hookStatus.managedByApp ? (
+                              <code className="text-xs">
+                                O app nao altera hooks que voce instalou
+                                manualmente.
+                              </code>
+                            ) : null}
+                            {hookStatus?.hookPath ? (
+                              <code className="text-xs">
+                                {hookStatus.hookPath}
+                              </code>
+                            ) : null}
+                          </div>
+                        </StatusAlert>
 
+                        <div className="actionRow">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => refreshRepositoryContext(true)}
+                            disabled={refreshingRepo || !selectedRepo.localPath}
+                          >
+                            {refreshingRepo
+                              ? "Conferindo..."
+                              : "Conferir ambiente"}
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={handleInstallPrePushHook}
+                            disabled={
+                              installingHook ||
+                              removingHook ||
+                              refreshingRepo ||
+                              !selectedRepo.localPath
+                            }
+                          >
+                            {installingHook
+                              ? "Instalando..."
+                              : hookStatus?.managedByApp
+                                ? "Reparar protecao"
+                                : "Instalar protecao"}
+                          </Button>
+                          {hookStatus?.managedByApp ? (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              onClick={handleRemovePrePushHook}
+                              disabled={
+                                removingHook ||
+                                installingHook ||
+                                refreshingRepo ||
+                                !selectedRepo.localPath
+                              }
+                            >
+                              {removingHook
+                                ? "Removendo..."
+                                : "Remover protecao"}
+                            </Button>
+                          ) : null}
+                          <Button
+                            type="button"
+                            onClick={handleApplyIdentity}
+                            disabled={
+                              applyingIdentity ||
+                              removingHook ||
+                              refreshingRepo ||
+                              !selectedRepo.localPath
+                            }
+                          >
+                            {applyingIdentity
+                              ? "Aplicando..."
+                              : "Ajustar identidade Git"}
+                          </Button>
+                        </div>
+
+                        <h3 className="subheading">Checklist detalhado</h3>
+                        <ul className="contextChecklist">
+                          {contextSwitchChecks.map((check) => (
+                            <li
+                              key={`detail-${check.id}`}
+                              className={`contextCheckItem contextCheckItem-${check.status}`}
+                            >
+                              <strong>{check.label}</strong>
+                              <span>{check.message}</span>
+                            </li>
+                          ))}
+                        </ul>
+
+                        <DetailSection
+                          title="Anotacoes do projeto"
+                          action={
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() => setRepoNoteDialogOpen(true)}
+                            >
+                              <Plus className="h-4 w-4" aria-hidden />
+                              Nova anotacao
+                            </Button>
+                          }
+                        >
+                          {(repoMemory?.notes ?? []).length > 0 ? (
                             <ul className="historyList">
                               {(repoMemory?.notes ?? []).map((note) => (
                                 <li key={note.id}>
@@ -9200,198 +8229,231 @@ export function App() {
                                 </li>
                               ))}
                             </ul>
+                          ) : (
+                            <StatusAlert status="warning" title="Sem anotacoes">
+                              Registre padroes e comandos uteis deste repo.
+                            </StatusAlert>
+                          )}
+                        </DetailSection>
 
-                            {repoError ? (
-                              <p className="errorText">{repoError}</p>
-                            ) : null}
-                          </>
-                        ) : (
-                          <StatusAlert
-                            status="warning"
-                            title="Detalhes completos no passo Pronto"
-                          >
-                            Siga os passos acima para conferir e preparar o
-                            ambiente.
-                          </StatusAlert>
-                        )}
-                      </>
-                    ) : (
-                      <StatusAlert status="warning" title="Escolha um projeto">
-                        Selecione um repositorio no passo Projeto ou na lista ao
-                        lado.
-                      </StatusAlert>
-                    )}
+                        {repoError ? (
+                          <p className="errorText">{repoError}</p>
+                        ) : null}
+                      </div>
+                    ) : null}
                   </div>
-                </>
-              ) : (
-                <div className="contextStepPlaceholder">
-                  <strong>Passo 1 — Empresa</strong>
-                  <span>
-                    Escolha a empresa acima para ver os projetos e detalhes do
-                    ambiente.
-                  </span>
                 </div>
               )}
-            </div>
-          </section>
+            </section>
+          </ReposView>
         ) : null}
 
         {activeView === "history" ? (
-          <section className="panel historyPanel">
-            <div className="historyFilters">
-              <div className="historyFilterRow">
-                <SearchField
-                  type="search"
-                  placeholder="Filtrar por texto no historico..."
-                  value={historyTextQuery}
-                  onChange={(event) => setHistoryTextQuery(event.target.value)}
-                  aria-label="Busca textual no historico"
-                />
-              </div>
-              <FilterTabs
-                value={historyKindFilter}
-                onValueChange={setHistoryKindFilter}
-                aria-label="Filtrar historico por tipo"
-                items={HISTORY_KIND_FILTERS.map((filter) => ({
-                  id: filter.id,
-                  label: `${filter.label} (${historyKindCounts[filter.id]})`,
-                  icon: HISTORY_KIND_ICONS[filter.id],
-                }))}
+          <HistoryView
+            historyTextQuery={historyTextQuery}
+            onHistoryTextQueryChange={setHistoryTextQuery}
+            historyKindFilter={historyKindFilter}
+            onHistoryKindFilterChange={(value) =>
+              setHistoryKindFilter(value as HistoryKindFilter)
+            }
+            historyAdvancedFiltersOpen={historyAdvancedFiltersOpen}
+            onHistoryAdvancedFiltersOpenChange={setHistoryAdvancedFiltersOpen}
+            historyTaskFilter={historyTaskFilter}
+            onHistoryTaskFilterChange={setHistoryTaskFilter}
+            historyRepoFilter={historyRepoFilter}
+            onHistoryRepoFilterChange={setHistoryRepoFilter}
+            historyOrgFilter={historyOrgFilter}
+            onHistoryOrgFilterChange={setHistoryOrgFilter}
+            historyTaskOptions={historyTaskOptions}
+            historyRepoOptions={historyRepoOptions}
+            historyOrgOptions={historyOrgOptions}
+            historyKindFilters={HISTORY_KIND_FILTERS}
+            historyKindCounts={historyKindCounts}
+            historyLoading={historyLoading}
+            historySearchBusy={historySearchBusy}
+            historyError={historyError}
+            historyEventsCount={historyEvents.length}
+            historyUsesDeepSearch={historyUsesDeepSearch}
+            filteredHistoryEventsCount={filteredHistoryEvents.length}
+            groupedHistoryEvents={groupedHistoryEvents}
+            onOpenBacklog={() => setActiveView("backlog")}
+            onEventClick={(event) =>
+              handleContextEventClick(event as ContextEventDto)
+            }
+            formatEventKind={(kind) =>
+              normalizeContextEventLabel(kind as ContextEventKind)
+            }
+            formatDateTime={formatDateTime}
+            truncateDetail={truncateSearchDetail}
+            formatEventMeta={(event) =>
+              formatHistoryEventMeta(event as ContextEventDto)
+            }
+            renderOrganizationAvatar={(organizationId, fallbackName) => (
+              <OrganizationAvatar
+                name={
+                  findOrganizationById(organizationId)?.name ??
+                  fallbackName ??
+                  "Empresa"
+                }
+                kind={findOrganizationById(organizationId)?.kind}
+                logoUrl={getOrganizationLogoUrl(organizationId)}
+                size="sm"
               />
-              <div className="historyFilterRow">
-                <label className="grid gap-2 text-sm text-muted-foreground">
-                  <Label htmlFor="history-task-filter">Tarefa</Label>
-                  <select
-                    id="history-task-filter"
-                    value={historyTaskFilter}
-                    onChange={(event) =>
-                      setHistoryTaskFilter(event.target.value)
-                    }
-                  >
-                    <option value="all">Todas</option>
-                    {historyTaskOptions.map(([id, title]) => (
-                      <option key={id} value={id}>
-                        {title}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="grid gap-2 text-sm text-muted-foreground">
-                  <Label htmlFor="history-repo-filter">Projeto</Label>
-                  <select
-                    id="history-repo-filter"
-                    value={historyRepoFilter}
-                    onChange={(event) =>
-                      setHistoryRepoFilter(event.target.value)
-                    }
-                  >
-                    <option value="all">Todos</option>
-                    {historyRepoOptions.map(([id, name]) => (
-                      <option key={id} value={id}>
-                        {name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="grid gap-2 text-sm text-muted-foreground">
-                  <Label htmlFor="history-org-filter">Empresa</Label>
-                  <select
-                    id="history-org-filter"
-                    value={historyOrgFilter}
-                    onChange={(event) =>
-                      setHistoryOrgFilter(event.target.value)
-                    }
-                  >
-                    <option value="all">Todas</option>
-                    {historyOrgOptions.map(([id, name]) => (
-                      <option key={id} value={id}>
-                        {name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-            </div>
-
-            {historyLoading ? (
-              <p className="historyEmpty">Carregando historico...</p>
-            ) : historySearchBusy ? (
-              <p className="historyEmpty">Buscando no historico...</p>
-            ) : historyError ? (
-              <p className="historyEmpty">{historyError}</p>
-            ) : historyEvents.length === 0 && !historyTextQuery.trim() ? (
-              <div className="historyEmpty">
-                <p>Nenhum evento registrado ainda.</p>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => setActiveView("backlog")}
-                >
-                  Ir para tarefas
-                </Button>
-              </div>
-            ) : filteredHistoryEvents.length === 0 ? (
-              <p className="historyEmpty">
-                {historyUsesDeepSearch
-                  ? `Nenhum resultado para "${historyTextQuery.trim()}".`
-                  : "Nenhum evento com esses filtros."}
-              </p>
-            ) : (
-              <ul className="historyGroupedList">
-                {groupedHistoryEvents.map((group) => (
-                  <li key={group.dayKey} className="historyDayGroup">
-                    <h3 className="historyDayHeading">{group.label}</h3>
-                    <ul className="historyEventList">
-                      {group.events.map((event) => (
-                        <li key={`${event.kind}-${event.id}`}>
-                          <HistoryEventButton
-                            kind={event.kind}
-                            onClick={() => handleContextEventClick(event)}
-                            meta={`${normalizeContextEventLabel(event.kind)} · ${formatDateTime(event.createdAt)}`}
-                            title={event.title}
-                            detail={
-                              event.detail
-                                ? truncateSearchDetail(event.detail)
-                                : undefined
-                            }
-                            context={
-                              formatHistoryEventMeta(event) ? (
-                                <span className="historyEventContext">
-                                  {event.organizationId ? (
-                                    <OrganizationAvatar
-                                      name={
-                                        findOrganizationById(
-                                          event.organizationId,
-                                        )?.name ??
-                                        event.organizationName ??
-                                        "Empresa"
-                                      }
-                                      kind={
-                                        findOrganizationById(
-                                          event.organizationId,
-                                        )?.kind
-                                      }
-                                      logoUrl={getOrganizationLogoUrl(
-                                        event.organizationId,
-                                      )}
-                                      size="sm"
-                                    />
-                                  ) : null}
-                                  <span>{formatHistoryEventMeta(event)}</span>
-                                </span>
-                              ) : undefined
-                            }
-                          />
-                        </li>
-                      ))}
-                    </ul>
-                  </li>
-                ))}
-              </ul>
             )}
-          </section>
+          />
         ) : null}
-      </main>
+      </AppShell>
+
+      <OrganizationCreateDialog
+        open={orgCreateDialogOpen}
+        onOpenChange={setOrgCreateDialogOpen}
+        busy={orgSetupBusy}
+        onSubmit={handleCreateOrganization}
+      />
+      <OrgProjectCreateDialog
+        open={orgProjectDialogOpen}
+        onOpenChange={setOrgProjectDialogOpen}
+        busy={orgSetupBusy}
+        onSubmit={handleCreateOrgProject}
+      />
+      <OrgLinkRepositoryDialog
+        open={orgLinkRepoDialogOpen}
+        onOpenChange={setOrgLinkRepoDialogOpen}
+        busy={orgSetupBusy}
+        projectId={orgLinkProjectId}
+        onProjectIdChange={setOrgLinkProjectId}
+        projectOptions={orgSetupProjects.map((project) => ({
+          value: project.id,
+          label: project.name,
+        }))}
+        path={orgLinkRepoPath}
+        inspecting={orgLinkInspecting}
+        repoName={orgLinkRepoName}
+        remote={orgLinkRepoRemote}
+        inspection={orgLinkInspection}
+        onPathChange={(value) => {
+          setOrgLinkRepoPath(value);
+          setOrgLinkInspection(null);
+        }}
+        onBrowse={async () => {
+          const picked = await pickLocalFolder(orgLinkRepoPath);
+          if (!picked) return;
+          setOrgLinkRepoPath(picked);
+          setOrgLinkInspection(null);
+        }}
+        onInspect={() =>
+          void inspectLocalProjectPath(orgLinkRepoPath, {
+            setInspection: setOrgLinkInspection,
+            setPath: setOrgLinkRepoPath,
+            setError: setOrgSetupError,
+            setInspecting: setOrgLinkInspecting,
+            onDetected: (inspection) => {
+              if (!orgLinkRepoName.trim() && inspection.suggestedName) {
+                setOrgLinkRepoName(inspection.suggestedName);
+              }
+              if (!orgLinkRepoRemote.trim() && inspection.remoteUrl) {
+                setOrgLinkRepoRemote(inspection.remoteUrl);
+              }
+            },
+          })
+        }
+        onRepoNameChange={setOrgLinkRepoName}
+        onRemoteChange={setOrgLinkRepoRemote}
+        onSubmit={handleOrgLinkRepository}
+      />
+      <OrgReassignRepositoryDialog
+        open={orgReassignDialogOpen}
+        onOpenChange={setOrgReassignDialogOpen}
+        busy={orgSetupBusy}
+        repositoryOptions={orgSetupRepositories.map((repository) => ({
+          value: repository.id,
+          label: repository.name,
+        }))}
+        projectOptions={orgSetupProjects.map((project) => ({
+          value: project.id,
+          label: project.name,
+        }))}
+        onSubmit={handleReassignRepository}
+      />
+      <PmProjectMappingDialog
+        open={pmMappingDialogOpen}
+        onOpenChange={setPmMappingDialogOpen}
+        busy={integrationBusy}
+        jiraProjectOptions={pmExternalProjects.map((projectKey) => ({
+          value: projectKey,
+          label: projectKey,
+        }))}
+        wcpProjectOptions={projects
+          .filter((project) => project.organizationId === orgSetupSelectedId)
+          .map((project) => ({
+            value: project.id,
+            label: project.name,
+          }))}
+        repositoryOptions={repositories
+          .filter((repo) => repo.organizationId === orgSetupSelectedId)
+          .map((repo) => ({
+            value: repo.id,
+            label: repo.name,
+          }))}
+        onSubmit={handleSavePmProjectMapping}
+      />
+      <AddRepositoryDialog
+        open={addRepoDialogOpen}
+        onOpenChange={setAddRepoDialogOpen}
+        busy={newProjectSaving}
+        projectId={newRepoProjectId}
+        onProjectIdChange={setNewRepoProjectId}
+        projectOptions={projects
+          .filter(
+            (project) => project.organizationId === selectedOrganizationId,
+          )
+          .map((project) => ({
+            value: project.id,
+            label: project.name,
+          }))}
+        path={newProjectPath}
+        inspecting={newProjectInspecting}
+        name={newProjectName}
+        remoteUrl={newProjectRemoteUrl}
+        inspection={newProjectInspection}
+        identityWarning={newProjectIdentityWarning}
+        error={newProjectError}
+        onPathChange={(value) => {
+          setNewProjectPath(value);
+          setNewProjectInspection(null);
+          setNewProjectError(null);
+        }}
+        onBrowse={() => void browseNewProjectPath()}
+        onInspect={() => void inspectNewProjectPath()}
+        onNameChange={setNewProjectName}
+        onRemoteChange={setNewProjectRemoteUrl}
+        onSubmit={handleCreateProject}
+      />
+      <EditRepositoryPathDialog
+        open={editRepoPathDialogOpen}
+        onOpenChange={setEditRepoPathDialogOpen}
+        busy={editProjectSaving}
+        path={editProjectPath}
+        inspecting={editProjectInspecting}
+        remoteUrl={editProjectRemoteUrl}
+        inspection={editProjectInspection}
+        error={editProjectError}
+        onPathChange={(value) => {
+          setEditProjectPath(value);
+          setEditProjectInspection(null);
+          setEditProjectError(null);
+        }}
+        onBrowse={() => void browseEditProjectPath()}
+        onInspect={() => void inspectEditProjectPath()}
+        onRemoteChange={setEditProjectRemoteUrl}
+        onSubmit={handleUpdateProjectPath}
+      />
+      <RepositoryNoteDialog
+        open={repoNoteDialogOpen}
+        onOpenChange={setRepoNoteDialogOpen}
+        busy={contextBusy}
+        onSubmit={handleSaveRepositoryNote}
+      />
 
       <ConfirmDialog
         open={confirmDialog !== null}
@@ -9736,14 +8798,18 @@ function optionalFormValue(value: string): string | undefined {
 function buildTaskPreviewLine(task: WorkItemDto): string | undefined {
   const parts: string[] = [];
   if (task.resumeSummary?.trim()) {
-    parts.push(task.resumeSummary.trim());
+    parts.push(task.resumeSummary.trim().slice(0, 80));
   } else if (task.description?.trim()) {
-    parts.push(task.description.trim());
+    parts.push(task.description.trim().slice(0, 80));
   }
   if (task.scheduledFor) {
     parts.push(`Prazo ${formatDateTime(task.scheduledFor)}`);
   }
-  return parts.length > 0 ? parts.join(" · ") : undefined;
+  const joined = parts.join(" · ");
+  if (!joined) {
+    return undefined;
+  }
+  return joined.length > 96 ? `${joined.slice(0, 95)}…` : joined;
 }
 
 function formatPmProviderLabel(provider: string): string {
