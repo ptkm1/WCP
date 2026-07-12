@@ -1,4 +1,5 @@
 use super::credentials::parse_clickup_credentials;
+use super::filter::clickup_updated_after_ms;
 use super::types::{
     ClickUpTeamDto, ExternalTaskSnapshot, PmConnectionInfo, PmProviderClient, SyncFilter,
 };
@@ -182,9 +183,12 @@ impl PmProviderClient for ClickUpClient {
         let user_id = client.ensure_user_id()?;
 
         let include_closed = if filter.include_closed { "true" } else { "false" };
-        let url = format!(
+        let mut url = format!(
             "https://api.clickup.com/api/v2/team/{team_id}/task?assignees[]={user_id}&include_closed={include_closed}"
         );
+        if let Some(updated_after_ms) = clickup_updated_after_ms(filter) {
+            url.push_str(&format!("&date_updated_gt={updated_after_ms}"));
+        }
 
         let response = client
             .client
@@ -238,6 +242,7 @@ fn map_clickup_task(task: ClickUpTask) -> Option<ExternalTaskSnapshot> {
         external_id: id.clone(),
         external_key: Some(id),
         external_url: task.url,
+        external_project_key: None,
         title: task.name.unwrap_or_else(|| "Sem titulo".to_string()),
         description: task.description,
         status: normalize_pm_status("clickup", &status_label),

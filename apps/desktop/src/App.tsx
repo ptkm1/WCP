@@ -33,6 +33,7 @@ import {
   buildWorkContextEntityRefs,
   listOrganizationContextGaps,
   validateWorkContextLinks,
+  type PmSyncFilter,
 } from "@wcp/domain";
 import {
   ArrowRightLeft,
@@ -75,6 +76,7 @@ interface WorkItemDto {
   externalId?: string | null;
   externalKey?: string | null;
   externalUrl?: string | null;
+  wcpDismissedAt?: string | null;
   updatedAt?: string;
 }
 
@@ -113,6 +115,8 @@ interface TodayFocusDto {
   dependencyLabel?: string | null;
   resumeHint?: string | null;
   signals: string[];
+  deadlineSignals?: string[];
+  suggestedByDeadline?: boolean;
 }
 
 interface PlanItemDto {
@@ -268,6 +272,68 @@ interface IntegrationConnectionDto {
   syncFilterJson?: string | null;
 }
 
+type SyncFilterFormState = {
+  assigneeOnly: boolean;
+  includeClosed: boolean;
+  focusCurrentWork: boolean;
+  updatedWithinDays: number;
+  jql: string;
+};
+
+const DEFAULT_SYNC_FILTER: SyncFilterFormState = {
+  assigneeOnly: true,
+  includeClosed: false,
+  focusCurrentWork: true,
+  updatedWithinDays: 21,
+  jql: "",
+};
+
+function parseSyncFilterJson(raw?: string | null): SyncFilterFormState {
+  if (!raw) {
+    return { ...DEFAULT_SYNC_FILTER };
+  }
+
+  try {
+    const value = JSON.parse(raw) as PmSyncFilter;
+    return {
+      assigneeOnly: value.assigneeOnly ?? true,
+      includeClosed: value.includeClosed ?? false,
+      focusCurrentWork: value.focusCurrentWork ?? true,
+      updatedWithinDays: value.updatedWithinDays ?? 21,
+      jql: value.jql ?? "",
+    };
+  } catch {
+    return { ...DEFAULT_SYNC_FILTER };
+  }
+}
+
+function buildSyncFilterJson(state: SyncFilterFormState): string {
+  return JSON.stringify({
+    assigneeOnly: state.assigneeOnly,
+    includeClosed: state.includeClosed,
+    focusCurrentWork: state.focusCurrentWork,
+    updatedWithinDays: state.updatedWithinDays,
+    jql: state.jql.trim() || null,
+  });
+}
+
+function describeJiraSyncFilter(state: SyncFilterFormState): string {
+  if (state.jql.trim()) {
+    return state.jql.trim();
+  }
+
+  const parts = ["assignee = currentUser()"];
+  if (!state.includeClosed) {
+    parts.push("resolution = Unresolved");
+  }
+  if (state.focusCurrentWork) {
+    parts.push(
+      `(sprint in openSprints() OR updated >= -${state.updatedWithinDays}d)`,
+    );
+  }
+  return `${parts.join(" AND ")} ORDER BY updated DESC`;
+}
+
 interface ClickUpTeamDto {
   id: string;
   name: string;
@@ -277,6 +343,7 @@ interface PmSyncResultDto {
   created: number;
   updated: number;
   unchanged: number;
+  removed: number;
   errors: string[];
 }
 
@@ -288,7 +355,42 @@ interface DeadlineAlertItemDto {
   externalUrl?: string | null;
   kind: string;
   hoursUntilDue: number;
+  organizationId?: string | null;
+  organizationName?: string | null;
 }
+
+interface PmProjectMappingDto {
+  id: string;
+  organizationId: string;
+  integrationConnectionId?: string | null;
+  externalProjectKey: string;
+  projectId: string;
+  projectName?: string | null;
+  defaultRepositoryId?: string | null;
+  defaultRepositoryName?: string | null;
+}
+
+interface ApplyWorkItemContextResultDto {
+  workItemId: string;
+  needsRepositoryLink: boolean;
+  repositoryId?: string | null;
+  repositoryName?: string | null;
+  context?: {
+    repositoryId: string;
+    identityChanges: string[];
+    remoteChanged: boolean;
+    validation?: IdentityValidationDto | null;
+  } | null;
+  guardrail?: RepositoryGuardrailDto | null;
+}
+
+type IntegrationWizardStep =
+  | "choose"
+  | "test"
+  | "save"
+  | "filters"
+  | "sync"
+  | "review";
 
 interface DeadlineAlertsDto {
   overdue: DeadlineAlertItemDto[];
@@ -347,6 +449,8 @@ interface SessionLogDto {
   decisions?: string | null;
   result?: string | null;
   sourceType?: string;
+  workItemExternalKey?: string | null;
+  workItemExternalProvider?: string | null;
 }
 
 interface KnowledgeNoteDto {
@@ -539,8 +643,25 @@ const BACKLOG_STATUS_FILTERS = [
 
 const BACKLOG_SORT_OPTIONS = [
   { value: "priority", label: "Prioridade" },
+  { value: "scheduled_for", label: "Prazo" },
   { value: "title", label: "Titulo" },
   { value: "status", label: "Status" },
+] as const;
+
+const BACKLOG_SOURCE_FILTERS = [
+  { value: "all", label: "Todas as origens" },
+  { value: "manual", label: "Manuais" },
+  { value: "imported", label: "Importadas" },
+  { value: "jira", label: "Jira" },
+  { value: "clickup", label: "ClickUp" },
+] as const;
+
+const BACKLOG_DEADLINE_FILTERS = [
+  { value: "all", label: "Todos os prazos" },
+  { value: "overdue", label: "Vencidas" },
+  { value: "due_today", label: "Vence hoje" },
+  { value: "due_soon", label: "Em breve" },
+  { value: "no_deadline", label: "Sem prazo" },
 ] as const;
 
 const TIMELINE_FILTERS: { id: TimelineFilter; label: string }[] = [
@@ -951,11 +1072,15 @@ export function App() {
   const [taskFormBaseline, setTaskFormBaseline] =
     useState<TaskFormDraft | null>(null);
   const [showArchivedBacklog, setShowArchivedBacklog] = useState(false);
+  const [showDismissedBacklog, setShowDismissedBacklog] = useState(false);
   const [backlogSearchQuery, setBacklogSearchQuery] = useState("");
   const [backlogStatusFilter, setBacklogStatusFilter] = useState<string>("all");
   const [backlogOrgFilter, setBacklogOrgFilter] = useState<string>("all");
+  const [backlogSourceFilter, setBacklogSourceFilter] = useState<string>("all");
+  const [backlogDeadlineFilter, setBacklogDeadlineFilter] =
+    useState<string>("all");
   const [backlogSort, setBacklogSort] = useState<
-    "priority" | "title" | "status"
+    "priority" | "scheduled_for" | "title" | "status"
   >("priority");
   const [resumeSuggestion, setResumeSuggestion] = useState<{
     taskId: string;
@@ -1118,6 +1243,31 @@ export function App() {
   const [clickUpTeams, setClickUpTeams] = useState<ClickUpTeamDto[]>([]);
   const [deadlineAlerts, setDeadlineAlerts] =
     useState<DeadlineAlertsDto | null>(null);
+  const [taskContextBusy, setTaskContextBusy] = useState(false);
+  const [taskContextMessage, setTaskContextMessage] = useState<string | null>(
+    null,
+  );
+  const [integrationWizardStep, setIntegrationWizardStep] =
+    useState<IntegrationWizardStep>("choose");
+  const [integrationWizardProvider, setIntegrationWizardProvider] = useState<
+    "jira" | "clickup" | null
+  >(null);
+  const [pmProjectMappings, setPmProjectMappings] = useState<
+    PmProjectMappingDto[]
+  >([]);
+  const [pmExternalProjects, setPmExternalProjects] = useState<string[]>([]);
+  const [pmMappingDraft, setPmMappingDraft] = useState({
+    externalProjectKey: "",
+    projectId: "",
+    defaultRepositoryId: "",
+  });
+  const [jiraSyncFilter, setJiraSyncFilter] = useState<SyncFilterFormState>({
+    ...DEFAULT_SYNC_FILTER,
+  });
+  const [clickUpSyncFilter, setClickUpSyncFilter] =
+    useState<SyncFilterFormState>({
+      ...DEFAULT_SYNC_FILTER,
+    });
   const [newRepoProjectId, setNewRepoProjectId] = useState("");
   const [resolvedWorkContext, setResolvedWorkContext] =
     useState<ResolvedWorkContextDto | null>(null);
@@ -1328,6 +1478,45 @@ export function App() {
       cancelled = true;
     };
   }, [orgSetupSelectedId, orgDetailTab]);
+
+  useEffect(() => {
+    if (!orgSetupSelectedId || activeView !== "organizations") {
+      return;
+    }
+    setBacklogOrgFilter(orgSetupSelectedId);
+  }, [activeView, orgSetupSelectedId]);
+
+  useEffect(() => {
+    if (orgDetailTab !== "integrations" || !orgSetupSelectedId) {
+      return;
+    }
+
+    let cancelled = false;
+    void Promise.all([
+      invoke<PmProjectMappingDto[]>("list_pm_project_mappings_command", {
+        organizationId: orgSetupSelectedId,
+      }),
+      invoke<string[]>("list_pm_external_projects", {
+        organizationId: orgSetupSelectedId,
+      }),
+    ])
+      .then(([mappings, externalProjects]) => {
+        if (!cancelled) {
+          setPmProjectMappings(mappings);
+          setPmExternalProjects(externalProjects);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setPmProjectMappings([]);
+          setPmExternalProjects([]);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [orgDetailTab, orgSetupSelectedId, integrationConnections]);
 
   useEffect(() => {
     if (activeView !== "today") {
@@ -2064,11 +2253,19 @@ export function App() {
     () => new Map(data?.backlog.map((item) => [item.id, item]) ?? []),
     [data],
   );
+  const organizationMap = useMemo(
+    () => new Map(organizations.map((org) => [org.id, org.name])),
+    [organizations],
+  );
   const filteredBacklog = useMemo(() => {
     let items = data?.backlog ?? [];
 
     if (!showArchivedBacklog) {
       items = items.filter((item) => item.status !== "archived");
+    }
+
+    if (!showDismissedBacklog) {
+      items = items.filter((item) => !item.wcpDismissedAt);
     }
 
     if (backlogStatusFilter === "blocked") {
@@ -2081,6 +2278,23 @@ export function App() {
       items = items.filter((item) => item.organizationId === backlogOrgFilter);
     }
 
+    if (backlogSourceFilter === "manual") {
+      items = items.filter((item) => item.sourceType !== "imported");
+    } else if (backlogSourceFilter === "imported") {
+      items = items.filter((item) => item.sourceType === "imported");
+    } else if (backlogSourceFilter === "jira") {
+      items = items.filter((item) => item.externalProvider === "jira");
+    } else if (backlogSourceFilter === "clickup") {
+      items = items.filter((item) => item.externalProvider === "clickup");
+    }
+
+    if (backlogDeadlineFilter !== "all") {
+      items = items.filter(
+        (item) =>
+          classifyWorkItemDeadlineFilter(item) === backlogDeadlineFilter,
+      );
+    }
+
     const query = backlogSearchQuery.trim().toLowerCase();
     if (query) {
       items = items.filter(
@@ -2088,7 +2302,8 @@ export function App() {
           item.title.toLowerCase().includes(query) ||
           item.description?.toLowerCase().includes(query) ||
           item.resumeSummary?.toLowerCase().includes(query) ||
-          item.blockedReason?.toLowerCase().includes(query),
+          item.blockedReason?.toLowerCase().includes(query) ||
+          item.externalKey?.toLowerCase().includes(query),
       );
     }
 
@@ -2099,15 +2314,23 @@ export function App() {
       if (backlogSort === "status") {
         return left.status.localeCompare(right.status, "pt-BR");
       }
+      if (backlogSort === "scheduled_for") {
+        const leftDate = left.scheduledFor ?? "9999-12-31";
+        const rightDate = right.scheduledFor ?? "9999-12-31";
+        return leftDate.localeCompare(rightDate);
+      }
       return (left.priority ?? 3) - (right.priority ?? 3);
     });
   }, [
+    backlogDeadlineFilter,
     backlogOrgFilter,
     backlogSearchQuery,
     backlogSort,
+    backlogSourceFilter,
     backlogStatusFilter,
     data?.backlog,
     showArchivedBacklog,
+    showDismissedBacklog,
   ]);
   const taskFormWarnings = useMemo(
     () =>
@@ -2137,6 +2360,10 @@ export function App() {
         ? buildTodayDayBrief(data, todayFocusTask, todayCommittedTask)
         : null,
     [data, todayCommittedTask, todayFocusTask],
+  );
+  const groupedDeadlineAlerts = useMemo(
+    () => groupDeadlineAlertsByOrganization(deadlineAlerts?.items ?? []),
+    [deadlineAlerts],
   );
   const todayStatusChips = useMemo(
     () =>
@@ -2886,6 +3113,17 @@ export function App() {
       setOrgEnvFormDirty(false);
       setOrgSetupSuccess("Identidade Git salva.");
       await refreshOrganizationLogos([response.organization]);
+      if (orgIdentityRepoId) {
+        try {
+          const guardrail = await invoke<RepositoryGuardrailDto | null>(
+            "get_repository_guardrail",
+            { repositoryId: orgIdentityRepoId },
+          );
+          setOrgIdentityGuardrail(guardrail);
+        } catch {
+          // validacao opcional apos salvar
+        }
+      }
     } catch (saveError) {
       setOrgSetupError(
         extractErrorMessage(saveError, "Falha ao salvar identidade Git"),
@@ -3305,6 +3543,7 @@ export function App() {
         // formulario permanece limpo
       }
     }
+    setJiraSyncFilter(parseSyncFilterJson(jira?.syncFilterJson));
 
     if (clickup?.configJson) {
       try {
@@ -3314,6 +3553,7 @@ export function App() {
         // formulario permanece limpo
       }
     }
+    setClickUpSyncFilter(parseSyncFilterJson(clickup?.syncFilterJson));
 
     if (
       options?.loadClickUpTeams &&
@@ -3429,6 +3669,7 @@ export function App() {
           email: jiraEmail.trim(),
         }),
         credentialsJson: buildJiraCredentialsJson(),
+        syncFilterJson: buildSyncFilterJson(jiraSyncFilter),
       });
       setJiraApiToken("");
       setIntegrationMessage("Conexao Jira salva.");
@@ -3518,6 +3759,7 @@ export function App() {
         displayName: "ClickUp",
         configJson: JSON.stringify({ teamId: clickUpTeamId.trim() }),
         credentialsJson: buildClickUpCredentialsJson(),
+        syncFilterJson: buildSyncFilterJson(clickUpSyncFilter),
       });
       setClickUpApiToken("");
       setIntegrationMessage("Conexao ClickUp salva.");
@@ -3529,6 +3771,74 @@ export function App() {
     } finally {
       setIntegrationBusy(false);
     }
+  }
+
+  async function handleSavePmSyncFilter(provider: "jira" | "clickup") {
+    const connection = getPmConnection(provider);
+    if (!connection) {
+      setIntegrationMessage("Salve a conexao antes de configurar os filtros.");
+      return;
+    }
+
+    const filter = provider === "jira" ? jiraSyncFilter : clickUpSyncFilter;
+    const providerLabel = provider === "jira" ? "Jira" : "ClickUp";
+
+    try {
+      setIntegrationBusy(true);
+      setIntegrationMessage(null);
+      await invoke("save_integration_sync_filter", {
+        connectionId: connection.id,
+        syncFilterJson: buildSyncFilterJson(filter),
+      });
+      setIntegrationMessage(`Filtros de sync do ${providerLabel} salvos.`);
+      await reloadIntegrationConnections();
+    } catch (saveError) {
+      setIntegrationMessage(
+        extractErrorMessage(
+          saveError,
+          `Falha ao salvar filtros do ${providerLabel}`,
+        ),
+      );
+    } finally {
+      setIntegrationBusy(false);
+    }
+  }
+
+  function handleDeletePmConnection(provider: "jira" | "clickup") {
+    const connection = getPmConnection(provider);
+    if (!connection) {
+      return;
+    }
+
+    const providerLabel = provider === "jira" ? "Jira" : "ClickUp";
+    setConfirmDialog({
+      title: `Remover integracao ${providerLabel}?`,
+      description:
+        "Remove credenciais, mapeamentos de projeto e tarefas importadas desta empresa. Voce podera configurar de novo em outra empresa.",
+      confirmLabel: "Remover integracao",
+      destructive: true,
+      onConfirm: async () => {
+        try {
+          setIntegrationBusy(true);
+          setIntegrationMessage(null);
+          await invoke("delete_integration_connection", {
+            connectionId: connection.id,
+          });
+          setIntegrationMessage(`Integracao ${providerLabel} removida.`);
+          await reloadIntegrationConnections();
+          await refreshDashboard();
+        } catch (deleteError) {
+          setIntegrationMessage(
+            extractErrorMessage(
+              deleteError,
+              `Falha ao remover ${providerLabel}`,
+            ),
+          );
+        } finally {
+          setIntegrationBusy(false);
+        }
+      },
+    });
   }
 
   async function handleSyncPmTasks(provider?: "jira" | "clickup") {
@@ -3549,6 +3859,7 @@ export function App() {
       const summary = [
         `${result.created} criadas`,
         `${result.updated} atualizadas`,
+        `${result.removed} removidas`,
         `${result.unchanged} sem mudanca`,
       ].join(" · ");
       setIntegrationMessage(
@@ -3564,6 +3875,156 @@ export function App() {
     } catch (syncError) {
       setIntegrationMessage(
         extractErrorMessage(syncError, "Falha ao sincronizar tarefas"),
+      );
+    } finally {
+      setIntegrationBusy(false);
+    }
+  }
+
+  async function handleCommitTodayPlan() {
+    const candidates = (data?.backlog ?? [])
+      .filter((item) => item.sourceType === "imported")
+      .filter((item) => item.status === "todo" || item.status === "doing")
+      .filter((item) => {
+        const kind = classifyWorkItemDeadlineFilter(item);
+        return (
+          kind === "overdue" || kind === "due_today" || kind === "due_soon"
+        );
+      })
+      .sort((left, right) => {
+        const leftDate = left.scheduledFor ?? "9999-12-31";
+        const rightDate = right.scheduledFor ?? "9999-12-31";
+        return leftDate.localeCompare(rightDate);
+      })
+      .slice(0, 3)
+      .map((item) => item.id);
+
+    if (candidates.length === 0) {
+      setError(
+        "Nenhuma tarefa importada com prazo encontrada para montar o dia.",
+      );
+      return;
+    }
+
+    try {
+      await invoke("commit_today_plan_command", { workItemIds: candidates });
+      await refreshDashboard();
+      setError(null);
+    } catch (commitError) {
+      setError(
+        extractErrorMessage(commitError, "Falha ao montar plano do dia"),
+      );
+    }
+  }
+
+  async function handleApplyWorkItemContext(task: WorkItemDto) {
+    try {
+      setTaskContextBusy(true);
+      setTaskContextMessage(null);
+      const result = await invoke<ApplyWorkItemContextResultDto>(
+        "apply_work_item_context",
+        { workItemId: task.id },
+      );
+
+      if (result.needsRepositoryLink) {
+        setTaskContextMessage(
+          "Vincule um repositorio a esta tarefa antes de aplicar o contexto.",
+        );
+        return;
+      }
+
+      setTaskContextMessage(
+        result.context?.validation?.status === "ok"
+          ? "Contexto completo aplicado com sucesso."
+          : "Contexto aplicado. Revise os checks de validacao.",
+      );
+      await refreshDashboard();
+      if (result.repositoryId) {
+        const repository = repositories.find(
+          (entry) => entry.id === result.repositoryId,
+        );
+        if (repository) {
+          setSelectedGuardrail(result.guardrail ?? null);
+        }
+      }
+    } catch (contextError) {
+      setTaskContextMessage(
+        extractErrorMessage(
+          contextError,
+          "Falha ao aplicar contexto da tarefa",
+        ),
+      );
+    } finally {
+      setTaskContextBusy(false);
+    }
+  }
+
+  async function handleStartFocusForTask(task: WorkItemDto) {
+    try {
+      setSessionBusy(true);
+      setSessionGoal(task.title);
+      const result = await invoke<{
+        session: SessionLogDto;
+        suggestedWorkItemId?: string | null;
+      }>("start_session", {
+        workItemId: task.id,
+        repositoryId: task.primaryRepositoryId ?? null,
+        goal: task.title,
+      });
+
+      if (
+        !task.id &&
+        result.suggestedWorkItemId &&
+        result.suggestedWorkItemId !== task.id
+      ) {
+        selectTaskId(result.suggestedWorkItemId);
+      }
+
+      await refreshDashboard();
+      setActiveView("today");
+      window.setTimeout(() => {
+        sessionPanelRef.current?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        });
+      }, 120);
+    } catch (sessionError) {
+      setError(extractErrorMessage(sessionError, "Falha ao iniciar foco"));
+    } finally {
+      setSessionBusy(false);
+    }
+  }
+
+  async function handleSavePmProjectMapping() {
+    if (
+      !orgSetupSelectedId ||
+      !pmMappingDraft.externalProjectKey ||
+      !pmMappingDraft.projectId
+    ) {
+      setIntegrationMessage(
+        "Selecione projeto Jira e projeto WCP para mapear.",
+      );
+      return;
+    }
+
+    try {
+      setIntegrationBusy(true);
+      await invoke<PmProjectMappingDto>("save_pm_project_mapping", {
+        organizationId: orgSetupSelectedId,
+        integrationConnectionId: getPmConnection("jira")?.id ?? null,
+        externalProjectKey: pmMappingDraft.externalProjectKey,
+        projectId: pmMappingDraft.projectId,
+        defaultRepositoryId: pmMappingDraft.defaultRepositoryId || null,
+      });
+      const mappings = await invoke<PmProjectMappingDto[]>(
+        "list_pm_project_mappings_command",
+        { organizationId: orgSetupSelectedId },
+      );
+      setPmProjectMappings(mappings);
+      setIntegrationMessage("Mapeamento de projeto salvo.");
+    } catch (mappingError) {
+      setIntegrationMessage(
+        extractErrorMessage(mappingError, "Falha ao salvar mapeamento"),
       );
     } finally {
       setIntegrationBusy(false);
@@ -4205,6 +4666,54 @@ export function App() {
     }
   }
 
+  async function handleDismissTask() {
+    if (!currentTask || !selectedTaskId || taskActionBusy) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      "Ignorar esta tarefa no WCP? Ela some do foco, prazos e plano do dia. Jira/ClickUp nao serao alterados.",
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      setTaskActionBusy(true);
+      await invoke<{ task: WorkItemDto }>("dismiss_work_item_command", {
+        workItemId: selectedTaskId,
+      });
+      await refreshDashboard(null);
+    } catch (dismissError) {
+      setError(
+        extractErrorMessage(dismissError, "Falha ao ignorar tarefa no WCP"),
+      );
+    } finally {
+      setTaskActionBusy(false);
+    }
+  }
+
+  async function handleRestoreDismissedTask() {
+    if (!currentTask || !selectedTaskId || taskActionBusy) {
+      return;
+    }
+
+    try {
+      setTaskActionBusy(true);
+      const response = await invoke<{ task: WorkItemDto }>(
+        "restore_dismissed_work_item_command",
+        { workItemId: selectedTaskId },
+      );
+      await refreshDashboard(response.task.id);
+    } catch (restoreError) {
+      setError(
+        extractErrorMessage(restoreError, "Falha ao restaurar tarefa ignorada"),
+      );
+    } finally {
+      setTaskActionBusy(false);
+    }
+  }
+
   async function handleDuplicateTask() {
     if (!selectedTaskId || taskActionBusy) {
       return;
@@ -4710,36 +5219,60 @@ export function App() {
                     aria-label="Prazos das integracoes"
                   >
                     <h3 className="subheading">Prazos das integracoes</h3>
-                    <ul className="historyList integrationDeadlineList">
-                      {deadlineAlerts.items.map((alert) => (
-                        <li key={`${alert.workItemId}-${alert.kind}`}>
-                          <div>
-                            <strong>{alert.title}</strong>
-                            <span>
-                              {formatDeadlineAlertKind(alert.kind)} ·{" "}
-                              {formatDateTime(alert.scheduledFor)}
-                              {alert.externalProvider
-                                ? ` · ${formatPmProviderLabel(alert.externalProvider)}`
-                                : ""}
-                            </span>
-                          </div>
-                          {alert.externalUrl ? (
-                            <a
-                              className="externalTaskLink"
-                              href={alert.externalUrl}
-                              target="_blank"
-                              rel="noreferrer"
-                            >
-                              Abrir
-                            </a>
-                          ) : null}
-                        </li>
-                      ))}
-                    </ul>
+                    {groupedDeadlineAlerts.map((group) => (
+                      <div
+                        key={group.organizationId}
+                        className="integrationDeadlineGroup"
+                      >
+                        <div className="integrationDeadlineGroupHeader">
+                          <OrganizationAvatar
+                            name={group.organizationName}
+                            logoUrl={
+                              organizationLogoUrls[group.organizationId] ?? null
+                            }
+                            size="sm"
+                          />
+                          <strong>{group.organizationName}</strong>
+                        </div>
+                        <ul className="historyList integrationDeadlineList">
+                          {group.items.map((alert) => (
+                            <li key={`${alert.workItemId}-${alert.kind}`}>
+                              <div>
+                                <strong>{alert.title}</strong>
+                                <span>
+                                  {formatDeadlineAlertKind(alert.kind)} ·{" "}
+                                  {formatDateTime(alert.scheduledFor)}
+                                  {alert.externalProvider
+                                    ? ` · ${formatPmProviderLabel(alert.externalProvider)}`
+                                    : ""}
+                                </span>
+                              </div>
+                              {alert.externalUrl ? (
+                                <a
+                                  className="externalTaskLink"
+                                  href={alert.externalUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                >
+                                  Abrir
+                                </a>
+                              ) : null}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ))}
                   </section>
                 ) : null}
 
                 <div className="quickLinks">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => void handleCommitTodayPlan()}
+                  >
+                    Montar meu dia
+                  </Button>
                   <Button
                     type="button"
                     variant="outline"
@@ -4998,6 +5531,38 @@ export function App() {
 
                 <div className="backlogFilters">
                   <label className="grid gap-2 text-xs text-muted-foreground">
+                    <Label htmlFor="backlog-source-filter">Origem</Label>
+                    <select
+                      id="backlog-source-filter"
+                      value={backlogSourceFilter}
+                      onChange={(event) =>
+                        setBacklogSourceFilter(event.target.value)
+                      }
+                    >
+                      {BACKLOG_SOURCE_FILTERS.map((filter) => (
+                        <option key={filter.value} value={filter.value}>
+                          {filter.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="grid gap-2 text-xs text-muted-foreground">
+                    <Label htmlFor="backlog-deadline-filter">Prazo</Label>
+                    <select
+                      id="backlog-deadline-filter"
+                      value={backlogDeadlineFilter}
+                      onChange={(event) =>
+                        setBacklogDeadlineFilter(event.target.value)
+                      }
+                    >
+                      {BACKLOG_DEADLINE_FILTERS.map((filter) => (
+                        <option key={filter.value} value={filter.value}>
+                          {filter.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="grid gap-2 text-xs text-muted-foreground">
                     <Label htmlFor="backlog-status-filter">Status</Label>
                     <select
                       id="backlog-status-filter"
@@ -5037,7 +5602,11 @@ export function App() {
                       value={backlogSort}
                       onChange={(event) =>
                         setBacklogSort(
-                          event.target.value as "priority" | "title" | "status",
+                          event.target.value as
+                            | "priority"
+                            | "scheduled_for"
+                            | "title"
+                            | "status",
                         )
                       }
                     >
@@ -5059,6 +5628,17 @@ export function App() {
                     }
                   />
                   Mostrar arquivadas
+                </label>
+
+                <label className="backlogToggleArchived">
+                  <input
+                    type="checkbox"
+                    checked={showDismissedBacklog}
+                    onChange={(event) =>
+                      setShowDismissedBacklog(event.target.checked)
+                    }
+                  />
+                  Mostrar ignoradas
                 </label>
 
                 <div className="repoList backlogList">
@@ -5084,6 +5664,9 @@ export function App() {
                       {item.status === "archived" ? (
                         <Badge variant="secondary">Arquivada</Badge>
                       ) : null}
+                      {item.wcpDismissedAt ? (
+                        <Badge variant="secondary">Ignorada</Badge>
+                      ) : null}
                       {relatedDependencyIds.has(item.id) ? (
                         <Badge variant="outline">Relacionada</Badge>
                       ) : null}
@@ -5093,6 +5676,12 @@ export function App() {
                           Importado ·{" "}
                           {formatPmProviderLabel(item.externalProvider)}
                           {item.externalKey ? ` · ${item.externalKey}` : ""}
+                        </Badge>
+                      ) : null}
+                      {item.organizationId ? (
+                        <Badge variant="secondary">
+                          {organizationMap.get(item.organizationId) ??
+                            "Empresa"}
                         </Badge>
                       ) : null}
                       {item.scheduledFor ? (
@@ -5163,6 +5752,41 @@ export function App() {
                           )}
                         </a>
                       ) : null}
+                      {currentTask.sourceType === "imported" &&
+                      !currentTask.wcpDismissedAt ? (
+                        <>
+                          <Button
+                            type="button"
+                            size="sm"
+                            disabled={taskContextBusy}
+                            onClick={() =>
+                              void handleApplyWorkItemContext(currentTask)
+                            }
+                          >
+                            Aplicar contexto completo
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            disabled={sessionBusy}
+                            onClick={() =>
+                              void handleStartFocusForTask(currentTask)
+                            }
+                          >
+                            Iniciar foco
+                          </Button>
+                        </>
+                      ) : null}
+                      {currentTask.organizationId ? (
+                        <Badge variant="secondary">
+                          {organizationMap.get(currentTask.organizationId) ??
+                            "Empresa"}
+                        </Badge>
+                      ) : null}
+                      {currentTask.wcpDismissedAt ? (
+                        <Badge variant="secondary">Ignorada no WCP</Badge>
+                      ) : null}
                       <Button
                         type="button"
                         variant="outline"
@@ -5195,6 +5819,27 @@ export function App() {
                           Abrir contexto Git
                         </Button>
                       ) : null}
+                      {currentTask.wcpDismissedAt ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={taskActionBusy}
+                          onClick={() => void handleRestoreDismissedTask()}
+                        >
+                          Restaurar ignorada
+                        </Button>
+                      ) : currentTask.sourceType === "imported" ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={taskActionBusy}
+                          onClick={() => void handleDismissTask()}
+                        >
+                          Ignorar no WCP
+                        </Button>
+                      ) : null}
                       {currentTask.status === "archived" ? (
                         <Button
                           type="button"
@@ -5219,6 +5864,57 @@ export function App() {
                     </div>
                   ) : null}
                 </div>
+
+                {taskContextMessage && currentTask ? (
+                  <p className="resultText">{taskContextMessage}</p>
+                ) : null}
+
+                {currentTask?.sourceType === "imported" &&
+                !currentTask.primaryRepositoryId ? (
+                  <div className="sessionForm compactForm">
+                    <p className="muted">
+                      Vincule um repositorio desta empresa para aplicar contexto
+                      Git automaticamente.
+                    </p>
+                    <label>
+                      Repositorio
+                      <select
+                        defaultValue=""
+                        onChange={(event) => {
+                          const repositoryId = event.target.value;
+                          if (!repositoryId || !currentTask) {
+                            return;
+                          }
+                          void invoke("update_work_item", {
+                            workItemId: currentTask.id,
+                            title: currentTask.title,
+                            description: currentTask.description,
+                            status: currentTask.status,
+                            priority: currentTask.priority ?? 3,
+                            organizationId: currentTask.organizationId,
+                            projectId: currentTask.projectId,
+                            primaryRepositoryId: repositoryId,
+                            blockedReason: currentTask.blockedReason,
+                            resumeSummary: currentTask.resumeSummary,
+                          }).then(() => refreshDashboard());
+                        }}
+                      >
+                        <option value="">Selecione</option>
+                        {repositories
+                          .filter(
+                            (repo) =>
+                              repo.organizationId ===
+                              currentTask.organizationId,
+                          )
+                          .map((repo) => (
+                            <option key={repo.id} value={repo.id}>
+                              {repo.name}
+                            </option>
+                          ))}
+                      </select>
+                    </label>
+                  </div>
+                ) : null}
 
                 {resumeSuggestion &&
                 selectedTaskId === resumeSuggestion.taskId &&
@@ -5515,8 +6211,18 @@ export function App() {
                               <li key={session.id}>
                                 <div>
                                   <strong>
+                                    {session.workItemExternalKey
+                                      ? `${session.workItemExternalKey} · `
+                                      : ""}
                                     {formatDateTime(session.startedAt)}
                                   </strong>
+                                  {session.workItemExternalProvider ? (
+                                    <Badge variant="outline">
+                                      {formatPmProviderLabel(
+                                        session.workItemExternalProvider,
+                                      )}
+                                    </Badge>
+                                  ) : null}
                                   {session.sourceType ? (
                                     <Badge variant="outline">
                                       {formatSourceTypeLabel(
@@ -6637,6 +7343,404 @@ export function App() {
                       <div className="orgDetailSection orgIntegrationsPanel">
                         <div className="orgIdentityInfoCard">
                           <SectionTitle icon={Info}>
+                            Assistente de integracao
+                          </SectionTitle>
+                          <p className="muted">
+                            Passo{" "}
+                            {integrationWizardStep === "choose"
+                              ? 1
+                              : integrationWizardStep === "test"
+                                ? 2
+                                : integrationWizardStep === "save"
+                                  ? 3
+                                  : integrationWizardStep === "filters"
+                                    ? 4
+                                    : integrationWizardStep === "sync"
+                                      ? 5
+                                      : 6}{" "}
+                            de 6
+                          </p>
+                          <div className="actionRow">
+                            <Button
+                              type="button"
+                              variant={
+                                integrationWizardStep === "choose"
+                                  ? "default"
+                                  : "outline"
+                              }
+                              size="sm"
+                              onClick={() => setIntegrationWizardStep("choose")}
+                            >
+                              1. Provider
+                            </Button>
+                            <Button
+                              type="button"
+                              variant={
+                                integrationWizardStep === "test"
+                                  ? "default"
+                                  : "outline"
+                              }
+                              size="sm"
+                              onClick={() => setIntegrationWizardStep("test")}
+                            >
+                              2. Testar
+                            </Button>
+                            <Button
+                              type="button"
+                              variant={
+                                integrationWizardStep === "save"
+                                  ? "default"
+                                  : "outline"
+                              }
+                              size="sm"
+                              onClick={() => setIntegrationWizardStep("save")}
+                            >
+                              3. Salvar
+                            </Button>
+                            <Button
+                              type="button"
+                              variant={
+                                integrationWizardStep === "filters"
+                                  ? "default"
+                                  : "outline"
+                              }
+                              size="sm"
+                              onClick={() =>
+                                setIntegrationWizardStep("filters")
+                              }
+                            >
+                              4. Filtros
+                            </Button>
+                            <Button
+                              type="button"
+                              variant={
+                                integrationWizardStep === "sync"
+                                  ? "default"
+                                  : "outline"
+                              }
+                              size="sm"
+                              onClick={() => setIntegrationWizardStep("sync")}
+                            >
+                              5. Sync
+                            </Button>
+                            <Button
+                              type="button"
+                              variant={
+                                integrationWizardStep === "review"
+                                  ? "default"
+                                  : "outline"
+                              }
+                              size="sm"
+                              onClick={() => setIntegrationWizardStep("review")}
+                            >
+                              6. Revisar
+                            </Button>
+                          </div>
+                          {integrationWizardStep === "choose" ? (
+                            <div className="actionRow">
+                              <Button
+                                type="button"
+                                variant={
+                                  integrationWizardProvider === "jira"
+                                    ? "default"
+                                    : "outline"
+                                }
+                                onClick={() =>
+                                  setIntegrationWizardProvider("jira")
+                                }
+                              >
+                                Jira
+                              </Button>
+                              <Button
+                                type="button"
+                                variant={
+                                  integrationWizardProvider === "clickup"
+                                    ? "default"
+                                    : "outline"
+                                }
+                                onClick={() =>
+                                  setIntegrationWizardProvider("clickup")
+                                }
+                              >
+                                ClickUp
+                              </Button>
+                            </div>
+                          ) : null}
+                          {integrationWizardStep === "filters" ? (
+                            <div className="sessionForm compactForm">
+                              <label className="backlogToggleArchived">
+                                <input
+                                  type="checkbox"
+                                  checked={
+                                    (integrationWizardProvider === "clickup"
+                                      ? clickUpSyncFilter
+                                      : jiraSyncFilter
+                                    ).assigneeOnly
+                                  }
+                                  onChange={(event) => {
+                                    const checked = event.target.checked;
+                                    if (
+                                      integrationWizardProvider === "clickup"
+                                    ) {
+                                      setClickUpSyncFilter((current) => ({
+                                        ...current,
+                                        assigneeOnly: checked,
+                                      }));
+                                    } else {
+                                      setJiraSyncFilter((current) => ({
+                                        ...current,
+                                        assigneeOnly: checked,
+                                      }));
+                                    }
+                                  }}
+                                />
+                                Apenas tarefas atribuidas a mim
+                              </label>
+                              <label className="backlogToggleArchived">
+                                <input
+                                  type="checkbox"
+                                  checked={
+                                    (integrationWizardProvider === "clickup"
+                                      ? clickUpSyncFilter
+                                      : jiraSyncFilter
+                                    ).focusCurrentWork
+                                  }
+                                  onChange={(event) => {
+                                    const checked = event.target.checked;
+                                    if (
+                                      integrationWizardProvider === "clickup"
+                                    ) {
+                                      setClickUpSyncFilter((current) => ({
+                                        ...current,
+                                        focusCurrentWork: checked,
+                                      }));
+                                    } else {
+                                      setJiraSyncFilter((current) => ({
+                                        ...current,
+                                        focusCurrentWork: checked,
+                                      }));
+                                    }
+                                  }}
+                                />
+                                Focar no trabalho atual (sprint aberta +
+                                atividade recente)
+                              </label>
+                              {(integrationWizardProvider === "clickup"
+                                ? clickUpSyncFilter
+                                : jiraSyncFilter
+                              ).focusCurrentWork ? (
+                                <label>
+                                  Atividade nos ultimos (dias)
+                                  <input
+                                    type="number"
+                                    min={1}
+                                    max={365}
+                                    value={
+                                      (integrationWizardProvider === "clickup"
+                                        ? clickUpSyncFilter
+                                        : jiraSyncFilter
+                                      ).updatedWithinDays
+                                    }
+                                    onChange={(event) => {
+                                      const days =
+                                        Number(event.target.value) || 21;
+                                      if (
+                                        integrationWizardProvider === "clickup"
+                                      ) {
+                                        setClickUpSyncFilter((current) => ({
+                                          ...current,
+                                          updatedWithinDays: days,
+                                        }));
+                                      } else {
+                                        setJiraSyncFilter((current) => ({
+                                          ...current,
+                                          updatedWithinDays: days,
+                                        }));
+                                      }
+                                    }}
+                                  />
+                                </label>
+                              ) : null}
+                              <label className="backlogToggleArchived">
+                                <input
+                                  type="checkbox"
+                                  checked={
+                                    (integrationWizardProvider === "clickup"
+                                      ? clickUpSyncFilter
+                                      : jiraSyncFilter
+                                    ).includeClosed
+                                  }
+                                  onChange={(event) => {
+                                    const checked = event.target.checked;
+                                    if (
+                                      integrationWizardProvider === "clickup"
+                                    ) {
+                                      setClickUpSyncFilter((current) => ({
+                                        ...current,
+                                        includeClosed: checked,
+                                      }));
+                                    } else {
+                                      setJiraSyncFilter((current) => ({
+                                        ...current,
+                                        includeClosed: checked,
+                                      }));
+                                    }
+                                  }}
+                                />
+                                Incluir fechadas
+                              </label>
+                              {integrationWizardProvider === "jira" ? (
+                                <label>
+                                  JQL customizado (opcional)
+                                  <input
+                                    value={jiraSyncFilter.jql}
+                                    onChange={(event) =>
+                                      setJiraSyncFilter((current) => ({
+                                        ...current,
+                                        jql: event.target.value,
+                                      }))
+                                    }
+                                    placeholder="Deixe vazio para usar o filtro padrao"
+                                  />
+                                </label>
+                              ) : null}
+                            </div>
+                          ) : null}
+                          {integrationWizardStep === "sync" ? (
+                            <div className="actionRow">
+                              <Button
+                                type="button"
+                                disabled={integrationBusy}
+                                onClick={() =>
+                                  void handleSyncPmTasks(
+                                    integrationWizardProvider ?? undefined,
+                                  )
+                                }
+                              >
+                                Executar primeiro sync
+                              </Button>
+                            </div>
+                          ) : null}
+                          {integrationWizardStep === "review" ? (
+                            <div className="actionRow">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                onClick={() => {
+                                  setBacklogSourceFilter("imported");
+                                  if (orgSetupSelectedId) {
+                                    setBacklogOrgFilter(orgSetupSelectedId);
+                                  }
+                                  setActiveView("backlog");
+                                }}
+                              >
+                                Ver tarefas importadas
+                              </Button>
+                            </div>
+                          ) : null}
+                        </div>
+
+                        <div className="orgIdentityInfoCard">
+                          <SectionTitle icon={Info}>
+                            Mapeamento Jira project → projeto WCP
+                          </SectionTitle>
+                          <div className="sessionForm compactForm">
+                            <label>
+                              Projeto Jira
+                              <select
+                                value={pmMappingDraft.externalProjectKey}
+                                onChange={(event) =>
+                                  setPmMappingDraft((current) => ({
+                                    ...current,
+                                    externalProjectKey: event.target.value,
+                                  }))
+                                }
+                              >
+                                <option value="">Selecione</option>
+                                {pmExternalProjects.map((projectKey) => (
+                                  <option key={projectKey} value={projectKey}>
+                                    {projectKey}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                            <label>
+                              Projeto WCP
+                              <select
+                                value={pmMappingDraft.projectId}
+                                onChange={(event) =>
+                                  setPmMappingDraft((current) => ({
+                                    ...current,
+                                    projectId: event.target.value,
+                                  }))
+                                }
+                              >
+                                <option value="">Selecione</option>
+                                {projects
+                                  .filter(
+                                    (project) =>
+                                      project.organizationId ===
+                                      orgSetupSelectedId,
+                                  )
+                                  .map((project) => (
+                                    <option key={project.id} value={project.id}>
+                                      {project.name}
+                                    </option>
+                                  ))}
+                              </select>
+                            </label>
+                            <label>
+                              Repo padrao (opcional)
+                              <select
+                                value={pmMappingDraft.defaultRepositoryId}
+                                onChange={(event) =>
+                                  setPmMappingDraft((current) => ({
+                                    ...current,
+                                    defaultRepositoryId: event.target.value,
+                                  }))
+                                }
+                              >
+                                <option value="">Nenhum</option>
+                                {repositories
+                                  .filter(
+                                    (repo) =>
+                                      repo.organizationId ===
+                                      orgSetupSelectedId,
+                                  )
+                                  .map((repo) => (
+                                    <option key={repo.id} value={repo.id}>
+                                      {repo.name}
+                                    </option>
+                                  ))}
+                              </select>
+                            </label>
+                            <Button
+                              type="button"
+                              disabled={integrationBusy}
+                              onClick={() => void handleSavePmProjectMapping()}
+                            >
+                              Salvar mapeamento
+                            </Button>
+                          </div>
+                          {pmProjectMappings.length > 0 ? (
+                            <ul className="historyList">
+                              {pmProjectMappings.map((mapping) => (
+                                <li key={mapping.id}>
+                                  <strong>{mapping.externalProjectKey}</strong>
+                                  <span>
+                                    → {mapping.projectName ?? mapping.projectId}
+                                    {mapping.defaultRepositoryName
+                                      ? ` · repo ${mapping.defaultRepositoryName}`
+                                      : ""}
+                                  </span>
+                                </li>
+                              ))}
+                            </ul>
+                          ) : null}
+                        </div>
+
+                        <div className="orgIdentityInfoCard">
+                          <SectionTitle icon={Info}>
                             Integracoes desta empresa
                           </SectionTitle>
                           <p className="muted">
@@ -6672,9 +7776,13 @@ export function App() {
 
                         <div className="sessionForm compactForm orgIntegrationCard">
                           <SectionTitle icon={Plug}>Jira Cloud</SectionTitle>
-                          {getPmConnection("jira") ? (
+                          {getPmConnection("jira")?.hasCredentials ? (
                             <Badge variant="success">
                               Conectado nesta empresa
+                            </Badge>
+                          ) : getPmConnection("jira") ? (
+                            <Badge variant="warning">
+                              Token pendente — salve novamente
                             </Badge>
                           ) : (
                             <Badge variant="outline">
@@ -6738,6 +7846,84 @@ export function App() {
                               }
                             />
                           </label>
+                          <div className="orgIntegrationFilterBlock">
+                            <p className="muted orgIntegrationFilterTitle">
+                              Filtros de sincronizacao
+                            </p>
+                            <label className="backlogToggleArchived">
+                              <input
+                                type="checkbox"
+                                checked={jiraSyncFilter.focusCurrentWork}
+                                onChange={(event) =>
+                                  setJiraSyncFilter((current) => ({
+                                    ...current,
+                                    focusCurrentWork: event.target.checked,
+                                  }))
+                                }
+                              />
+                              Sprint aberta + atividade recente
+                            </label>
+                            {jiraSyncFilter.focusCurrentWork ? (
+                              <label>
+                                Ultimos (dias)
+                                <input
+                                  type="number"
+                                  min={1}
+                                  max={365}
+                                  value={jiraSyncFilter.updatedWithinDays}
+                                  onChange={(event) =>
+                                    setJiraSyncFilter((current) => ({
+                                      ...current,
+                                      updatedWithinDays:
+                                        Number(event.target.value) || 21,
+                                    }))
+                                  }
+                                />
+                              </label>
+                            ) : null}
+                            <label className="backlogToggleArchived">
+                              <input
+                                type="checkbox"
+                                checked={jiraSyncFilter.includeClosed}
+                                onChange={(event) =>
+                                  setJiraSyncFilter((current) => ({
+                                    ...current,
+                                    includeClosed: event.target.checked,
+                                  }))
+                                }
+                              />
+                              Incluir fechadas
+                            </label>
+                            <label>
+                              JQL customizado (opcional)
+                              <input
+                                value={jiraSyncFilter.jql}
+                                onChange={(event) =>
+                                  setJiraSyncFilter((current) => ({
+                                    ...current,
+                                    jql: event.target.value,
+                                  }))
+                                }
+                                placeholder="Deixe vazio para o filtro padrao"
+                              />
+                            </label>
+                            <p className="muted orgIntegrationFilterPreview">
+                              {describeJiraSyncFilter(jiraSyncFilter)}
+                            </p>
+                            {getPmConnection("jira") ? (
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                disabled={integrationBusy}
+                                onClick={() =>
+                                  void handleSavePmSyncFilter("jira")
+                                }
+                              >
+                                Salvar filtros
+                              </Button>
+                            ) : null}
+                          </div>
                           <div className="actionRow">
                             <Button
                               type="button"
@@ -6758,20 +7944,35 @@ export function App() {
                               type="button"
                               variant="outline"
                               disabled={
-                                integrationBusy || !getPmConnection("jira")
+                                integrationBusy ||
+                                !getPmConnection("jira")?.hasCredentials
                               }
                               onClick={() => void handleSyncPmTasks("jira")}
                             >
                               Sincronizar Jira
                             </Button>
+                            {getPmConnection("jira") ? (
+                              <Button
+                                type="button"
+                                variant="destructive"
+                                disabled={integrationBusy}
+                                onClick={() => handleDeletePmConnection("jira")}
+                              >
+                                Remover integracao
+                              </Button>
+                            ) : null}
                           </div>
                         </div>
 
                         <div className="sessionForm compactForm orgIntegrationCard">
                           <SectionTitle icon={Plug}>ClickUp</SectionTitle>
-                          {getPmConnection("clickup") ? (
+                          {getPmConnection("clickup")?.hasCredentials ? (
                             <Badge variant="success">
                               Conectado nesta empresa
+                            </Badge>
+                          ) : getPmConnection("clickup") ? (
+                            <Badge variant="warning">
+                              Token pendente — salve novamente
                             </Badge>
                           ) : (
                             <Badge variant="outline">
@@ -6810,7 +8011,7 @@ export function App() {
                               placeholder={
                                 getPmConnection("clickup")?.hasCredentials
                                   ? "Deixe vazio no teste para usar salvo"
-                                  : "pk_..."
+                                  : "Cole o token e clique em Salvar"
                               }
                             />
                           </label>
@@ -6836,6 +8037,68 @@ export function App() {
                               Clique em Testar para carregar os workspaces.
                             </p>
                           )}
+                          <div className="orgIntegrationFilterBlock">
+                            <p className="muted orgIntegrationFilterTitle">
+                              Filtros de sincronizacao
+                            </p>
+                            <label className="backlogToggleArchived">
+                              <input
+                                type="checkbox"
+                                checked={clickUpSyncFilter.focusCurrentWork}
+                                onChange={(event) =>
+                                  setClickUpSyncFilter((current) => ({
+                                    ...current,
+                                    focusCurrentWork: event.target.checked,
+                                  }))
+                                }
+                              />
+                              Apenas tarefas com atividade recente
+                            </label>
+                            {clickUpSyncFilter.focusCurrentWork ? (
+                              <label>
+                                Ultimos (dias)
+                                <input
+                                  type="number"
+                                  min={1}
+                                  max={365}
+                                  value={clickUpSyncFilter.updatedWithinDays}
+                                  onChange={(event) =>
+                                    setClickUpSyncFilter((current) => ({
+                                      ...current,
+                                      updatedWithinDays:
+                                        Number(event.target.value) || 21,
+                                    }))
+                                  }
+                                />
+                              </label>
+                            ) : null}
+                            <label className="backlogToggleArchived">
+                              <input
+                                type="checkbox"
+                                checked={clickUpSyncFilter.includeClosed}
+                                onChange={(event) =>
+                                  setClickUpSyncFilter((current) => ({
+                                    ...current,
+                                    includeClosed: event.target.checked,
+                                  }))
+                                }
+                              />
+                              Incluir fechadas
+                            </label>
+                            {getPmConnection("clickup") ? (
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                disabled={integrationBusy}
+                                onClick={() =>
+                                  void handleSavePmSyncFilter("clickup")
+                                }
+                              >
+                                Salvar filtros
+                              </Button>
+                            ) : null}
+                          </div>
                           <div className="actionRow">
                             <Button
                               type="button"
@@ -6856,12 +8119,25 @@ export function App() {
                               type="button"
                               variant="outline"
                               disabled={
-                                integrationBusy || !getPmConnection("clickup")
+                                integrationBusy ||
+                                !getPmConnection("clickup")?.hasCredentials
                               }
                               onClick={() => void handleSyncPmTasks("clickup")}
                             >
                               Sincronizar ClickUp
                             </Button>
+                            {getPmConnection("clickup") ? (
+                              <Button
+                                type="button"
+                                variant="destructive"
+                                disabled={integrationBusy}
+                                onClick={() =>
+                                  handleDeletePmConnection("clickup")
+                                }
+                              >
+                                Remover integracao
+                              </Button>
+                            ) : null}
                           </div>
                         </div>
 
@@ -8300,7 +9576,11 @@ function buildTodayStatusChips(
     chips.push(`P${focusTask.priority ?? 3}`);
   }
 
-  return chips.slice(0, 4);
+  for (const signal of todayFocus.deadlineSignals ?? []) {
+    chips.push(signal);
+  }
+
+  return chips.slice(0, 6);
 }
 
 function formatValidationCheckDetail(check: ValidationCheckDto): string {
@@ -8488,6 +9768,80 @@ function formatDeadlineAlertKind(kind: string): string {
     default:
       return kind;
   }
+}
+
+function classifyWorkItemDeadlineFilter(item: WorkItemDto): string {
+  if (!item.scheduledFor?.trim()) {
+    return "no_deadline";
+  }
+  if (
+    item.status === "done" ||
+    item.status === "archived" ||
+    item.wcpDismissedAt
+  ) {
+    return "no_deadline";
+  }
+
+  const due = new Date(
+    /^\d{4}-\d{2}-\d{2}$/.test(item.scheduledFor.trim())
+      ? `${item.scheduledFor.trim()}T23:59:59`
+      : item.scheduledFor.trim(),
+  );
+  if (Number.isNaN(due.getTime())) {
+    return "no_deadline";
+  }
+
+  const now = new Date();
+  const hoursUntilDue = (due.getTime() - now.getTime()) / (1000 * 60 * 60);
+  if (hoursUntilDue < 0) {
+    return "overdue";
+  }
+
+  const isSameDay =
+    due.getFullYear() === now.getFullYear() &&
+    due.getMonth() === now.getMonth() &&
+    due.getDate() === now.getDate();
+  if (isSameDay) {
+    return "due_today";
+  }
+  if (hoursUntilDue <= 168) {
+    return "due_soon";
+  }
+  return "no_deadline";
+}
+
+function groupDeadlineAlertsByOrganization(
+  alerts: DeadlineAlertItemDto[],
+): Array<{
+  organizationId: string;
+  organizationName: string;
+  items: DeadlineAlertItemDto[];
+}> {
+  const groups = new Map<
+    string,
+    {
+      organizationId: string;
+      organizationName: string;
+      items: DeadlineAlertItemDto[];
+    }
+  >();
+
+  for (const alert of alerts) {
+    const organizationId = alert.organizationId ?? "sem-org";
+    const organizationName = alert.organizationName ?? "Sem empresa";
+    const existing = groups.get(organizationId);
+    if (existing) {
+      existing.items.push(alert);
+    } else {
+      groups.set(organizationId, {
+        organizationId,
+        organizationName,
+        items: [alert],
+      });
+    }
+  }
+
+  return [...groups.values()];
 }
 
 function getTaskFormWarnings(

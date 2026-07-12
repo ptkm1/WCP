@@ -953,6 +953,29 @@
   margin-top: 0;
 }
 
+.orgIntegrationFilterBlock {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--background) 92%, var(--foreground) 8%);
+}
+
+.orgIntegrationFilterTitle {
+  margin: 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.orgIntegrationFilterPreview {
+  margin: 0;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  word-break: break-word;
+}
+
 .integrationDeadlines {
   margin-top: 20px;
 }
@@ -962,6 +985,17 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+}
+
+.integrationDeadlineGroup + .integrationDeadlineGroup {
+  margin-top: 16px;
+}
+
+.integrationDeadlineGroupHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
 }
 
 .externalTaskLink {

@@ -1,9 +1,10 @@
-use crate::db::{escape_sql, get_optional_string, get_string, sqlite_exec, sqlite_json};
+use crate::db::{escape_sql, find_work_item_by_external_key, get_optional_string, get_string, sqlite_exec, sqlite_json};
 use crate::dto::{
     ApplyFullContextResultDto, FixRepositoryRemoteResultDto, GitSnapshot, IdentityValidationDto,
     LocalRepositoryInspectionDto, OrganizationIdentityImportDto, RepositoryGuardrailDto,
     ValidationCheckDto,
 };
+use crate::integrations::extract_ticket_keys_from_branch;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -31,6 +32,8 @@ pub fn load_guardrail_for_repository(
                 COALESCE(ri.git_user_email, ep.git_user_email) AS effective_git_user_email, \
                 COALESCE(ri.ssh_host_alias, ep.ssh_host_alias) AS effective_ssh_host_alias, \
                 ep.branch_pattern AS effective_branch_pattern, \
+                ep.pr_convention AS effective_pr_convention, \
+                ep.commit_convention AS effective_commit_convention, \
                 ri.provider_username, ri.provider_account_label \
          FROM repositories r \
          LEFT JOIN organizations org ON org.id = r.organization_id \
@@ -62,6 +65,8 @@ pub fn load_guardrail_for_repository(
     let provider_username = get_optional_string(row, "provider_username");
     let provider_account_label = get_optional_string(row, "provider_account_label");
     let branch_pattern = get_optional_string(row, "effective_branch_pattern");
+    let pr_convention = get_optional_string(row, "effective_pr_convention");
+    let commit_convention = get_optional_string(row, "effective_commit_convention");
     let identity_source = resolve_identity_source(
         get_optional_string(row, "environment_profile_id"),
         get_optional_string(row, "identity_git_user_name"),
@@ -86,11 +91,14 @@ pub fn load_guardrail_for_repository(
 
         match git_snapshot(path) {
             Ok(snapshot) => build_identity_validation(
+                organization_id.as_deref(),
                 expected_provider_host.clone(),
                 expected_user_name.clone(),
                 expected_user_email.clone(),
                 expected_ssh_alias.clone(),
                 branch_pattern.clone(),
+                pr_convention.clone(),
+                commit_convention.clone(),
                 snapshot,
             ),
             Err(error) => IdentityValidationDto {
@@ -271,6 +279,7 @@ pub fn git_snapshot(repository_path: &str) -> Result<GitSnapshot, String> {
         git_user_email: git_config_layered(repository_path, "user.email").0,
         ssh_host_alias: remote_url.as_deref().and_then(parse_ssh_host_alias),
         branch_name: git_value(repository_path, &["rev-parse", "--abbrev-ref", "HEAD"])?,
+        last_commit_subject: git_value(repository_path, &["log", "-1", "--format=%s"])?,
     })
 }
 
@@ -671,11 +680,14 @@ fn parse_ssh_host_alias(remote_url: &str) -> Option<String> {
 }
 
 fn build_identity_validation(
+    organization_id: Option<&str>,
     expected_provider_host: Option<String>,
     expected_user_name: Option<String>,
     expected_user_email: Option<String>,
     expected_ssh_alias: Option<String>,
     branch_pattern: Option<String>,
+    pr_convention: Option<String>,
+    commit_convention: Option<String>,
     snapshot: GitSnapshot,
 ) -> IdentityValidationDto {
     let checks = vec![
@@ -703,7 +715,14 @@ fn build_identity_validation(
             snapshot.ssh_host_alias,
             "Alias SSH",
         ),
-        compare_branch_pattern(branch_pattern, snapshot.branch_name),
+        compare_branch_pattern(branch_pattern, snapshot.branch_name.clone()),
+        compare_ticket_branch_match(organization_id, snapshot.branch_name.clone()),
+        compare_pr_convention(
+            pr_convention,
+            snapshot.branch_name.clone(),
+            snapshot.last_commit_subject.clone(),
+        ),
+        compare_commit_convention(commit_convention, snapshot.last_commit_subject.clone()),
     ];
 
     let status = if checks.iter().any(|check| check.status == "mismatch") {
@@ -784,6 +803,12 @@ fn compare_branch_pattern(
 }
 
 fn branch_matches_pattern(pattern: &str, branch: &str) -> bool {
+    if let Ok(regex) = regex::Regex::new(pattern) {
+        if regex.is_match(branch) {
+            return true;
+        }
+    }
+
     if let Some(start) = pattern.find('(') {
         if let Some(relative_end) = pattern[start..].find(')') {
             let alternatives = &pattern[start + 1..start + relative_end];
@@ -800,6 +825,170 @@ fn branch_matches_pattern(pattern: &str, branch: &str) -> bool {
     branch.starts_with("feat/")
         || branch.starts_with("fix/")
         || branch.starts_with("chore/")
+}
+
+fn compare_ticket_branch_match(
+    organization_id: Option<&str>,
+    branch_name: Option<String>,
+) -> ValidationCheckDto {
+    let Some(organization_id) = organization_id else {
+        return ValidationCheckDto {
+            key: "ticketBranchMatch".to_string(),
+            status: "warning".to_string(),
+            expected: None,
+            actual: branch_name,
+            message: "Ticket da branch nao pode ser validado sem empresa".to_string(),
+        };
+    };
+
+    let Some(branch_name) = branch_name.filter(|value| !value.trim().is_empty()) else {
+        return ValidationCheckDto {
+            key: "ticketBranchMatch".to_string(),
+            status: "warning".to_string(),
+            expected: None,
+            actual: None,
+            message: "Branch atual indisponivel para validar ticket".to_string(),
+        };
+    };
+
+    let keys = extract_ticket_keys_from_branch(&branch_name);
+    if keys.is_empty() {
+        return ValidationCheckDto {
+            key: "ticketBranchMatch".to_string(),
+            status: "warning".to_string(),
+            expected: Some("Ticket Jira na branch".to_string()),
+            actual: Some(branch_name),
+            message: "Branch sem ticket Jira detectavel".to_string(),
+        };
+    }
+
+    let db_path = match crate::db::resolve_db_path() {
+        Ok(path) => path,
+        Err(_) => {
+            return ValidationCheckDto {
+                key: "ticketBranchMatch".to_string(),
+                status: "warning".to_string(),
+                expected: Some(keys.join(", ")),
+                actual: Some(branch_name),
+                message: "Nao foi possivel validar ticket no backlog".to_string(),
+            };
+        }
+    };
+
+    let matched = keys.iter().any(|key| {
+        find_work_item_by_external_key(&db_path, organization_id, key)
+            .ok()
+            .flatten()
+            .is_some()
+    });
+
+    ValidationCheckDto {
+        key: "ticketBranchMatch".to_string(),
+        status: if matched { "ok" } else { "warning" }.to_string(),
+        expected: Some(keys.join(", ")),
+        actual: Some(branch_name),
+        message: if matched {
+            "Ticket da branch encontrado no backlog importado".to_string()
+        } else {
+            "Ticket da branch nao encontrado no backlog importado".to_string()
+        },
+    }
+}
+
+fn compare_pr_convention(
+    pr_convention: Option<String>,
+    branch_name: Option<String>,
+    commit_subject: Option<String>,
+) -> ValidationCheckDto {
+    let Some(convention) = pr_convention.filter(|value| !value.trim().is_empty()) else {
+        return ValidationCheckDto {
+            key: "prConvention".to_string(),
+            status: "warning".to_string(),
+            expected: None,
+            actual: branch_name,
+            message: "Convencao de PR nao configurada".to_string(),
+        };
+    };
+
+    if !convention.to_lowercase().contains("ticket") {
+        return ValidationCheckDto {
+            key: "prConvention".to_string(),
+            status: "ok".to_string(),
+            expected: Some(convention),
+            actual: branch_name,
+            message: "Convencao de PR registrada".to_string(),
+        };
+    }
+
+    let branch_keys = branch_name
+        .as_deref()
+        .map(extract_ticket_keys_from_branch)
+        .unwrap_or_default();
+    let commit_keys = commit_subject
+        .as_deref()
+        .map(extract_ticket_keys_from_branch)
+        .unwrap_or_default();
+    let has_ticket = !branch_keys.is_empty() || !commit_keys.is_empty();
+
+    ValidationCheckDto {
+        key: "prConvention".to_string(),
+        status: if has_ticket { "ok" } else { "warning" }.to_string(),
+        expected: Some(convention),
+        actual: branch_name.or(commit_subject),
+        message: if has_ticket {
+            "Ticket detectado na branch ou no ultimo commit".to_string()
+        } else {
+            "Convencao pede ticket, mas nenhum foi detectado".to_string()
+        },
+    }
+}
+
+fn compare_commit_convention(
+    commit_convention: Option<String>,
+    commit_subject: Option<String>,
+) -> ValidationCheckDto {
+    let Some(convention) = commit_convention.filter(|value| !value.trim().is_empty()) else {
+        return ValidationCheckDto {
+            key: "commitConvention".to_string(),
+            status: "warning".to_string(),
+            expected: None,
+            actual: commit_subject,
+            message: "Convencao de commit nao configurada".to_string(),
+        };
+    };
+
+    let Some(subject) = commit_subject.filter(|value| !value.trim().is_empty()) else {
+        return ValidationCheckDto {
+            key: "commitConvention".to_string(),
+            status: "warning".to_string(),
+            expected: Some(convention),
+            actual: None,
+            message: "Ultimo commit indisponivel para validar convencao".to_string(),
+        };
+    };
+
+    let conventional = subject.contains(':')
+        && subject
+            .split(':')
+            .next()
+            .is_some_and(|prefix| {
+                matches!(
+                    prefix.trim(),
+                    "feat" | "fix" | "chore" | "docs" | "refactor" | "test" | "build" | "ci"
+                )
+            });
+
+    ValidationCheckDto {
+        key: "commitConvention".to_string(),
+        status: if conventional { "ok" } else { "warning" }.to_string(),
+        expected: Some(convention),
+        actual: Some(subject),
+        message: if conventional {
+            "Ultimo commit segue conventional commits".to_string()
+        } else {
+            "Ultimo commit fora do padrao conventional commits".to_string()
+        },
+    }
 }
 
 #[cfg(test)]

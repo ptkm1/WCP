@@ -18,8 +18,9 @@ pub use git::{
 pub use entities::{delete_organization, delete_project, delete_repository};
 pub use integrations::{
     delete_integration_connection, get_deadline_alerts, list_clickup_teams,
-    list_integration_connections, notify_deadline_alerts, save_integration_connection,
-    sync_organization_pm_tasks_command, test_integration_connection,
+    list_integration_connections, list_pm_external_projects, list_pm_project_mappings_command,
+    notify_deadline_alerts, save_integration_connection, save_integration_sync_filter,
+    save_pm_project_mapping, sync_organization_pm_tasks_command, test_integration_connection,
 };
 pub use ssh::list_ssh_config_hosts;
 pub use history::{list_context_history, search_local_history};
@@ -35,7 +36,8 @@ pub use repository::{
     update_repository_local_path,
 };
 pub use task::{
-    attach_task_artifact, create_work_item, create_work_item_dependency,
-    delete_work_item_dependency, duplicate_work_item, end_session, get_task_context,
+    apply_work_item_context, attach_task_artifact, commit_today_plan_command, create_work_item,
+    create_work_item_dependency, delete_work_item_dependency, dismiss_work_item_command,
+    duplicate_work_item, end_session, get_task_context, restore_dismissed_work_item_command,
     save_task_note, start_session, update_work_item,
 };

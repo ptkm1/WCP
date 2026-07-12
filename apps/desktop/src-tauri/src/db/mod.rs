@@ -49,6 +49,8 @@ pub fn ensure_db_ready(db_path: &Path) -> Result<(), String> {
         apply_pending_migrations(db_path)?;
     }
 
+    integrations::repair_integration_credential_keys(db_path)?;
+
     Ok(())
 }
 
@@ -189,7 +191,7 @@ pub fn sqlite_exec(db_path: &Path, sql: &str) -> Result<(), String> {
 pub fn fetch_work_items(db_path: &Path) -> Result<Vec<WorkItemDto>, String> {
     let rows = sqlite_json(
         db_path,
-        "SELECT id, title, description, status, priority, organization_id, project_id, primary_repository_id, blocked_reason, resume_summary, source_type, scheduled_for, external_provider, external_id, external_key, external_url, updated_at FROM work_items ORDER BY priority ASC, updated_at DESC;",
+        "SELECT id, title, description, status, priority, organization_id, project_id, primary_repository_id, blocked_reason, resume_summary, source_type, scheduled_for, external_provider, external_id, external_key, external_url, wcp_dismissed_at, updated_at FROM work_items ORDER BY priority ASC, updated_at DESC;",
     )?;
 
     Ok(rows.iter().map(map_work_item_row).collect())
@@ -202,7 +204,7 @@ pub fn fetch_work_item_by_id(
     let rows = sqlite_json(
         db_path,
         &format!(
-            "SELECT id, title, description, status, priority, organization_id, project_id, primary_repository_id, blocked_reason, resume_summary, source_type, scheduled_for, external_provider, external_id, external_key, external_url, updated_at
+            "SELECT id, title, description, status, priority, organization_id, project_id, primary_repository_id, blocked_reason, resume_summary, source_type, scheduled_for, external_provider, external_id, external_key, external_url, wcp_dismissed_at, updated_at
              FROM work_items
              WHERE id = '{}'
              LIMIT 1;",
@@ -364,9 +366,6 @@ pub fn update_repository_context(
     )?;
 
     let profile_id = org.environment_profile_id.as_deref();
-    let git_user_name = org.git_user_name.as_deref();
-    let git_user_email = org.git_user_email.as_deref();
-    let ssh_host_alias = org.ssh_host_alias.as_deref();
     let organization_name = org.name.as_str();
 
     sqlite_exec(
@@ -374,18 +373,14 @@ pub fn update_repository_context(
         &format!(
             "UPDATE repository_identities
              SET environment_profile_id = {},
-                 git_user_name = {},
-                 git_user_email = {},
-                 ssh_host_alias = {},
-                 provider_username = {},
+                 git_user_name = NULL,
+                 git_user_email = NULL,
+                 ssh_host_alias = NULL,
+                 provider_username = NULL,
                  provider_account_label = {},
                  updated_at = '{}'
              WHERE repository_id = '{}';",
             nullable_sql(profile_id),
-            nullable_sql(git_user_name),
-            nullable_sql(git_user_email),
-            nullable_sql(ssh_host_alias),
-            nullable_sql(git_user_name),
             nullable_sql(Some(organization_name)),
             escape_sql(&now),
             escape_sql(repository_id)
@@ -510,6 +505,7 @@ fn map_work_item_row(row: &Value) -> WorkItemDto {
         external_id: get_optional_string(row, "external_id"),
         external_key: get_optional_string(row, "external_key"),
         external_url: get_optional_string(row, "external_url"),
+        wcp_dismissed_at: get_optional_string(row, "wcp_dismissed_at"),
         updated_at: get_string(row, "updated_at").unwrap_or_default(),
     }
 }
@@ -551,11 +547,14 @@ pub fn fetch_task_dependencies(
 pub fn fetch_active_session(db_path: &Path) -> Result<Option<SessionLogDto>, String> {
     let rows = sqlite_json(
         db_path,
-        "SELECT id, work_item_id, repository_id, branch_name, started_at, ended_at, goal, decisions, result, source_type
-         FROM session_logs
-         WHERE ended_at IS NULL
-         ORDER BY started_at DESC
-         LIMIT 1;",
+        &format!(
+            "{SESSION_SELECT}
+             FROM session_logs s
+             LEFT JOIN work_items wi ON wi.id = s.work_item_id
+             WHERE s.ended_at IS NULL
+             ORDER BY s.started_at DESC
+             LIMIT 1;"
+        ),
     )?;
 
     Ok(rows.first().map(map_session_row))
@@ -568,9 +567,10 @@ pub fn fetch_session_by_id(
     let rows = sqlite_json(
         db_path,
         &format!(
-            "SELECT id, work_item_id, repository_id, branch_name, started_at, ended_at, goal, decisions, result, source_type
-             FROM session_logs
-             WHERE id = '{}'
+            "{SESSION_SELECT}
+             FROM session_logs s
+             LEFT JOIN work_items wi ON wi.id = s.work_item_id
+             WHERE s.id = '{}'
              LIMIT 1;",
             escape_sql(session_id)
         ),
@@ -586,10 +586,11 @@ pub fn fetch_recent_sessions_by_work_item(
     let rows = sqlite_json(
         db_path,
         &format!(
-            "SELECT id, work_item_id, repository_id, branch_name, started_at, ended_at, goal, decisions, result, source_type
-             FROM session_logs
-             WHERE work_item_id = '{}'
-             ORDER BY started_at DESC
+            "{SESSION_SELECT}
+             FROM session_logs s
+             LEFT JOIN work_items wi ON wi.id = s.work_item_id
+             WHERE s.work_item_id = '{}'
+             ORDER BY s.started_at DESC
              LIMIT 5;",
             escape_sql(work_item_id)
         ),
@@ -822,6 +823,8 @@ fn map_session_row(row: &Value) -> SessionLogDto {
         decisions: get_optional_string(row, "decisions"),
         result: get_optional_string(row, "result"),
         source_type: get_string(row, "source_type").unwrap_or_else(|| "captured".to_string()),
+        work_item_external_key: get_optional_string(row, "work_item_external_key"),
+        work_item_external_provider: get_optional_string(row, "work_item_external_provider"),
     }
 }
 
@@ -838,27 +841,41 @@ fn map_note_row(row: &Value) -> KnowledgeNoteDto {
     }
 }
 
+mod daily_plan;
 mod deletions;
+mod dismissals;
 mod history;
 pub mod integrations;
 mod organizations;
+mod pm_mappings;
 mod search;
 
+pub use daily_plan::{commit_today_plan, fetch_persisted_today_plan};
 pub use deletions::{
-    delete_organization_record, delete_project_record, delete_repository_record,
+    delete_imported_work_items_for_provider, delete_organization_record, delete_pm_mappings_for_connection,
+    delete_project_record, delete_repository_record, prune_stale_imported_work_items,
 };
+pub use dismissals::{dismiss_work_item, is_pm_import_dismissed, restore_dismissed_work_item};
 pub use history::list_context_history;
 pub use integrations::{
     deadline_alert_sent_today, delete_integration_connection, empty_sync_result,
     fetch_integration_connection_by_id, fetch_integration_connections, insert_activity_event,
-    update_integration_sync_status, upsert_imported_work_item, upsert_integration_connection,
+    update_integration_sync_filter, update_integration_sync_status, upsert_imported_work_item,
+    upsert_integration_connection,
 };
 pub use organizations::{
     clear_organization_logo, fetch_organization_by_id, fetch_organizations, insert_organization,
     read_organization_logo_data_url, set_organization_logo, update_environment_profile_for_org,
     update_organization_record,
 };
+pub use pm_mappings::{
+    find_work_item_by_external_key, list_distinct_external_project_keys, list_pm_project_mappings,
+    resolve_pm_project_mapping, upsert_pm_project_mapping,
+};
 pub use search::search_local_history;
+
+const SESSION_SELECT: &str = "SELECT s.id, s.work_item_id, s.repository_id, s.branch_name, s.started_at, s.ended_at, s.goal, s.decisions, s.result, s.source_type,
+       wi.external_key AS work_item_external_key, wi.external_provider AS work_item_external_provider";
 
 fn map_artifact_row(row: &Value) -> ArtifactDto {
     ArtifactDto {

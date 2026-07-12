@@ -407,16 +407,17 @@ pub fn update_work_item(
 }
 
 pub fn build_today_summary(backlog: &[WorkItemDto]) -> TodaySummary {
+    let visible: Vec<_> = backlog.iter().filter(|item| is_planning_visible(item)).collect();
     TodaySummary {
-        executable_count: backlog
+        executable_count: visible
             .iter()
             .filter(|item| item.status == "todo" || item.status == "doing")
             .count(),
-        blocked_count: backlog
+        blocked_count: visible
             .iter()
             .filter(|item| item.status == "blocked")
             .count(),
-        doing_count: backlog.iter().filter(|item| item.status == "doing").count(),
+        doing_count: visible.iter().filter(|item| item.status == "doing").count(),
     }
 }
 
@@ -432,13 +433,15 @@ pub fn build_today_plan(
 
     let mut executable: Vec<&WorkItemDto> = backlog
         .iter()
+        .filter(|item| is_planning_visible(item))
         .filter(|item| !blocked_ids.contains(&item.id))
         .filter(|item| item.status == "todo" || item.status == "doing")
         .collect();
 
     executable.sort_by(|left, right| {
-        left.priority
-            .cmp(&right.priority)
+        deadline_sort_score(right)
+            .cmp(&deadline_sort_score(left))
+            .then_with(|| left.priority.cmp(&right.priority))
             .then_with(|| left.title.cmp(&right.title))
     });
 
@@ -456,6 +459,109 @@ pub fn build_today_plan(
         .collect()
 }
 
+fn deadline_sort_score(item: &WorkItemDto) -> i64 {
+    match classify_deadline_kind(item) {
+        DeadlineKind::Overdue => 300,
+        DeadlineKind::DueToday => 200,
+        DeadlineKind::DueSoon => 100,
+        DeadlineKind::NoDeadline => 0,
+    }
+}
+
+#[derive(PartialEq)]
+enum DeadlineKind {
+    Overdue,
+    DueToday,
+    DueSoon,
+    NoDeadline,
+}
+
+fn is_planning_visible(item: &WorkItemDto) -> bool {
+    item.wcp_dismissed_at.is_none() && item.status != "archived"
+}
+
+fn classify_deadline_kind(item: &WorkItemDto) -> DeadlineKind {
+    if item.wcp_dismissed_at.is_some() {
+        return DeadlineKind::NoDeadline;
+    }
+    let Some(scheduled_for) = item.scheduled_for.as_ref().filter(|value| !value.trim().is_empty())
+    else {
+        return DeadlineKind::NoDeadline;
+    };
+    if item.status == "done" || item.status == "archived" {
+        return DeadlineKind::NoDeadline;
+    }
+
+    let Some(due) = parse_scheduled_date(scheduled_for) else {
+        return DeadlineKind::NoDeadline;
+    };
+
+    let now = chrono::Utc::now();
+    let hours_until_due = (due - now).num_seconds() as f64 / 3600.0;
+    if hours_until_due < 0.0 {
+        return DeadlineKind::Overdue;
+    }
+    if due.date_naive() == now.date_naive() {
+        return DeadlineKind::DueToday;
+    }
+    if hours_until_due <= 168.0 {
+        return DeadlineKind::DueSoon;
+    }
+    DeadlineKind::NoDeadline
+}
+
+fn parse_scheduled_date(value: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    use chrono::{NaiveDate, TimeZone, Utc};
+
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if let Ok(date) = NaiveDate::parse_from_str(trimmed, "%Y-%m-%d") {
+        return date
+            .and_hms_opt(23, 59, 59)
+            .map(|datetime| Utc.from_utc_datetime(&datetime));
+    }
+    chrono::DateTime::parse_from_rfc3339(trimmed)
+        .ok()
+        .map(|value| value.with_timezone(&Utc))
+}
+
+fn find_deadline_focus_task(backlog: &[WorkItemDto]) -> Option<WorkItemDto> {
+    backlog
+        .iter()
+        .filter(|item| is_planning_visible(item))
+        .filter(|item| item.source_type == "imported")
+        .filter(|item| matches!(
+            classify_deadline_kind(item),
+            DeadlineKind::Overdue | DeadlineKind::DueToday
+        ))
+        .max_by_key(|item| deadline_sort_score(item))
+        .cloned()
+}
+
+fn build_deadline_signals(backlog: &[WorkItemDto]) -> Vec<String> {
+    let overdue = backlog
+        .iter()
+        .filter(|item| is_planning_visible(item))
+        .filter(|item| classify_deadline_kind(item) == DeadlineKind::Overdue)
+        .count();
+    let due_today = backlog
+        .iter()
+        .filter(|item| is_planning_visible(item))
+        .filter(|item| classify_deadline_kind(item) == DeadlineKind::DueToday)
+        .count();
+
+    let mut signals = Vec::new();
+    if overdue > 0 {
+        signals.push(format!("{overdue} prazo(s) vencido(s)"));
+    }
+    if due_today > 0 {
+        signals.push(format!("{due_today} prazo(s) para hoje"));
+    }
+    signals
+}
+
 pub fn resolve_focus_task(
     backlog: &[WorkItemDto],
     today_plan: &[PlanItemDto],
@@ -471,6 +577,7 @@ pub fn resolve_focus_task(
 
     if let Some(task) = backlog
         .iter()
+        .filter(|item| is_planning_visible(item))
         .filter(|item| item.status == "doing")
         .min_by(|left, right| {
             left.priority
@@ -479,6 +586,10 @@ pub fn resolve_focus_task(
         })
     {
         return Some(task.clone());
+    }
+
+    if let Some(task) = find_deadline_focus_task(backlog) {
+        return Some(task);
     }
 
     if let Some(committed) = today_plan.iter().find(|item| item.is_committed) {
@@ -526,8 +637,19 @@ pub fn build_today_focus(
         .and_then(|task| task.resume_summary.as_ref())
         .map(|summary| truncate_text(summary, 120));
 
+    let deadline_signals = build_deadline_signals(backlog);
+    let suggested_by_deadline = focus_task.is_some_and(|task| {
+        task.source_type == "imported"
+            && matches!(
+                classify_deadline_kind(task),
+                DeadlineKind::Overdue | DeadlineKind::DueToday
+            )
+    });
+
     let focus_kind = if active_session.is_some() {
         "session_active".to_string()
+    } else if suggested_by_deadline {
+        "deadline".to_string()
     } else if focus_task.is_some_and(|task| task.status == "blocked") || blocker_label.is_some()
     {
         "unblock".to_string()
@@ -553,6 +675,19 @@ pub fn build_today_focus(
         label.clone()
     } else if let Some(summary) = resume_hint.as_ref() {
         format!("Retomar: {summary}")
+    } else if let Some(task) = focus_task.filter(|task| {
+        task.source_type == "imported"
+            && matches!(
+                classify_deadline_kind(task),
+                DeadlineKind::Overdue | DeadlineKind::DueToday
+            )
+    }) {
+        let key = task
+            .external_key
+            .as_deref()
+            .map(|value| format!(" ({value})"))
+            .unwrap_or_default();
+        format!("Foco sugerido por prazo: {}{}", task.title, key)
     } else if let Some(task) = focus_task.filter(|task| task.status == "doing") {
         format!("Continuar: {}", task.title)
     } else if let Some(task) = committed_task {
@@ -596,7 +731,14 @@ pub fn build_today_focus(
         signals.push("Nada bloqueado por enquanto".to_string());
     }
 
-    if let Some(task) = committed_task {
+    if let Some(task) = focus_task.filter(|_| suggested_by_deadline) {
+        let key = task
+            .external_key
+            .as_deref()
+            .map(|value| format!(" ({value})"))
+            .unwrap_or_default();
+        signals.push(format!("Foco sugerido por prazo: {}{}", task.title, key));
+    } else if let Some(task) = committed_task {
         signals.push(format!("Prioridade do dia: {}", task.title));
     } else if let Some(task) = focus_task {
         signals.push(format!("Foco sugerido: {}", task.title));
@@ -627,6 +769,8 @@ pub fn build_today_focus(
         dependency_label,
         resume_hint,
         signals,
+        deadline_signals,
+        suggested_by_deadline,
     }
 }
 
@@ -646,6 +790,7 @@ pub fn build_recoverable_context(
 ) -> Vec<RecoverableContextCandidateDto> {
     let mut candidates: Vec<RecoverableContextCandidateDto> = backlog
         .iter()
+        .filter(|candidate| is_planning_visible(candidate))
         .filter(|candidate| candidate.id != current_task.id)
         .filter_map(|candidate| {
             let mut score = 0;

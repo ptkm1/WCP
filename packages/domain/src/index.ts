@@ -162,6 +162,7 @@ export interface WorkItem {
   externalId?: string | null;
   externalKey?: string | null;
   externalUrl?: string | null;
+  wcpDismissedAt?: string | null;
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }
@@ -197,6 +198,8 @@ export interface ExternalTaskSnapshot {
 export interface PmSyncFilter {
   assigneeOnly?: boolean;
   includeClosed?: boolean;
+  focusCurrentWork?: boolean;
+  updatedWithinDays?: number;
   jql?: string | null;
 }
 

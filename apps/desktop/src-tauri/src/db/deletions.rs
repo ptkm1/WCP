@@ -4,7 +4,6 @@ use super::{
     fetch_organization_by_id, fetch_project_by_id, fetch_repository_by_id, get_string,
     sqlite_exec, sqlite_json,
 };
-use crate::integrations::delete_credentials;
 use crate::util::iso_now;
 use std::path::Path;
 
@@ -143,6 +142,77 @@ fn delete_work_items_by_ids(db_path: &Path, work_item_ids: &[String]) -> Result<
     Ok(())
 }
 
+pub fn delete_imported_work_items_for_provider(
+    db_path: &Path,
+    organization_id: &str,
+    provider: &str,
+) -> Result<(), String> {
+    let work_item_rows = sqlite_json(
+        db_path,
+        &format!(
+            "SELECT id FROM work_items
+             WHERE organization_id = '{}'
+               AND external_provider = '{}'
+               AND source_type = 'imported';",
+            escape_sql(organization_id),
+            escape_sql(provider)
+        ),
+    )?;
+    let work_item_ids = collect_ids(work_item_rows, "id");
+    delete_work_items_by_ids(db_path, &work_item_ids)
+}
+
+pub fn prune_stale_imported_work_items(
+    db_path: &Path,
+    organization_id: &str,
+    provider: &str,
+    active_external_ids: &[String],
+) -> Result<usize, String> {
+    let rows = sqlite_json(
+        db_path,
+        &format!(
+            "SELECT id, external_id FROM work_items
+             WHERE organization_id = '{}'
+               AND external_provider = '{}'
+               AND source_type = 'imported';",
+            escape_sql(organization_id),
+            escape_sql(provider)
+        ),
+    )?;
+
+    let stale_ids: Vec<String> = rows
+        .iter()
+        .filter_map(|row| {
+            let work_item_id = get_string(row, "id")?;
+            let external_id = get_string(row, "external_id")?;
+            if active_external_ids.iter().any(|id| id == &external_id) {
+                None
+            } else {
+                Some(work_item_id)
+            }
+        })
+        .collect();
+
+    let removed = stale_ids.len();
+    if removed > 0 {
+        delete_work_items_by_ids(db_path, &stale_ids)?;
+    }
+    Ok(removed)
+}
+
+pub fn delete_pm_mappings_for_connection(
+    db_path: &Path,
+    connection_id: &str,
+) -> Result<(), String> {
+    sqlite_exec(
+        db_path,
+        &format!(
+            "DELETE FROM pm_project_mappings WHERE integration_connection_id = '{}';",
+            escape_sql(connection_id)
+        ),
+    )
+}
+
 pub fn delete_repository_record(db_path: &Path, repository_id: &str) -> Result<(), String> {
     let repository = fetch_repository_by_id(db_path, repository_id)?
         .ok_or_else(|| "Repositorio nao encontrado.".to_string())?;
@@ -257,7 +327,9 @@ pub fn delete_organization_record(db_path: &Path, organization_id: &str) -> Resu
         .ok_or_else(|| "Empresa nao encontrada.".to_string())?;
 
     for connection in fetch_integration_connections(db_path, organization_id)? {
-        let _ = delete_credentials(&connection.credential_key);
+        let _ = crate::integrations::delete_credentials(
+            &crate::integrations::credential_key_for_connection(&connection.id),
+        );
         delete_integration_connection(db_path, &connection.id)?;
     }
 

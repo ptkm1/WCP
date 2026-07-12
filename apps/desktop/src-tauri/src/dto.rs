@@ -23,6 +23,8 @@ pub struct TodayFocusDto {
     pub dependency_label: Option<String>,
     pub resume_hint: Option<String>,
     pub signals: Vec<String>,
+    pub deadline_signals: Vec<String>,
+    pub suggested_by_deadline: bool,
 }
 
 #[derive(Clone, Serialize)]
@@ -44,6 +46,7 @@ pub struct WorkItemDto {
     pub external_id: Option<String>,
     pub external_key: Option<String>,
     pub external_url: Option<String>,
+    pub wcp_dismissed_at: Option<String>,
     pub updated_at: String,
 }
 
@@ -271,6 +274,8 @@ pub struct SessionLogDto {
     pub decisions: Option<String>,
     pub result: Option<String>,
     pub source_type: String,
+    pub work_item_external_key: Option<String>,
+    pub work_item_external_provider: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -334,6 +339,7 @@ pub struct RepositoryHookStatusDto {
 #[serde(rename_all = "camelCase")]
 pub struct StartSessionResultDto {
     pub session: SessionLogDto,
+    pub suggested_work_item_id: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -471,6 +477,7 @@ pub struct GitSnapshot {
     pub git_user_email: Option<String>,
     pub ssh_host_alias: Option<String>,
     pub branch_name: Option<String>,
+    pub last_commit_subject: Option<String>,
 }
 
 #[derive(Clone, Serialize)]
@@ -534,6 +541,7 @@ pub struct PmSyncResultDto {
     pub created: usize,
     pub updated: usize,
     pub unchanged: usize,
+    pub removed: usize,
     pub errors: Vec<String>,
 }
 
@@ -547,6 +555,8 @@ pub struct DeadlineAlertItemDto {
     pub external_url: Option<String>,
     pub kind: String,
     pub hours_until_due: f64,
+    pub organization_id: Option<String>,
+    pub organization_name: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -563,4 +573,34 @@ pub struct DeadlineAlertsDto {
     pub due_today: Vec<DeadlineAlertItemDto>,
     pub due_soon: Vec<DeadlineAlertItemDto>,
     pub items: Vec<DeadlineAlertItemDto>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApplyWorkItemContextResultDto {
+    pub work_item_id: String,
+    pub needs_repository_link: bool,
+    pub repository_id: Option<String>,
+    pub repository_name: Option<String>,
+    pub context: Option<ApplyFullContextResultDto>,
+    pub guardrail: Option<RepositoryGuardrailDto>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitTodayPlanResultDto {
+    pub today_plan: Vec<PlanItemDto>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PmProjectMappingDto {
+    pub id: String,
+    pub organization_id: String,
+    pub integration_connection_id: Option<String>,
+    pub external_project_key: String,
+    pub project_id: String,
+    pub project_name: Option<String>,
+    pub default_repository_id: Option<String>,
+    pub default_repository_name: Option<String>,
 }

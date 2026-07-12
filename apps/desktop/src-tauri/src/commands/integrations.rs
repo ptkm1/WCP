@@ -1,19 +1,22 @@
 use crate::db::{
-    delete_integration_connection as remove_connection_record, ensure_db_ready,
-    fetch_integration_connection_by_id, fetch_integration_connections, resolve_db_path,
-    resolve_primary_workspace_id, upsert_integration_connection,
+    delete_integration_connection as remove_connection_record, delete_imported_work_items_for_provider,
+    delete_pm_mappings_for_connection, ensure_db_ready, fetch_integration_connection_by_id,
+    fetch_integration_connections, list_distinct_external_project_keys, list_pm_project_mappings,
+    resolve_db_path,     resolve_primary_workspace_id, update_integration_sync_filter, upsert_integration_connection,
+    upsert_pm_project_mapping,
 };
+use crate::integrations::default_sync_filter_json;
 use crate::dto::{
     ClickUpTeamDto, ClickUpTeamListDto, DeadlineAlertsDto, IntegrationConnectionDto,
-    PmConnectionInfoDto, PmConnectionTestResultDto, PmSyncResultDto,
+    PmConnectionInfoDto, PmConnectionTestResultDto, PmProjectMappingDto, PmSyncResultDto,
     SaveIntegrationConnectionResultDto,
 };
 use crate::integrations::{
-    build_clickup_secret, credential_key_for_connection, delete_credentials,
-    compute_deadline_alerts, list_teams_for_clickup, load_credentials, record_deadline_notification,
-    store_credentials, sync_organization_pm_tasks,
+    build_clickup_secret, compute_deadline_alerts, credential_key_for_connection,
+    delete_credentials, has_connection_credentials, list_teams_for_clickup,
+    load_connection_credentials, record_deadline_notification, store_credentials,
+    sync_organization_pm_tasks,
 };
-use serde_json::json;
 
 #[tauri::command]
 pub fn list_integration_connections(
@@ -21,7 +24,11 @@ pub fn list_integration_connections(
 ) -> Result<Vec<IntegrationConnectionDto>, String> {
     let db_path = resolve_db_path()?;
     ensure_db_ready(&db_path)?;
-    fetch_integration_connections(&db_path, &organization_id)
+    let mut connections = fetch_integration_connections(&db_path, &organization_id)?;
+    for connection in &mut connections {
+        connection.has_credentials = has_connection_credentials(&connection.id);
+    }
+    Ok(connections)
 }
 
 #[tauri::command]
@@ -31,6 +38,7 @@ pub fn save_integration_connection(
     display_name: Option<String>,
     config_json: String,
     credentials_json: String,
+    sync_filter_json: Option<String>,
 ) -> Result<SaveIntegrationConnectionResultDto, String> {
     let db_path = resolve_db_path()?;
     ensure_db_ready(&db_path)?;
@@ -46,32 +54,74 @@ pub fn save_integration_connection(
     let existing = fetch_integration_connections(&db_path, &organization_id)?
         .into_iter()
         .find(|entry| entry.provider == provider);
-    let connection_id = existing
-        .as_ref()
-        .map(|entry| entry.id.clone())
-        .unwrap_or_else(|| format!("int-{}", crate::util::unix_timestamp_millis().unwrap_or(0)));
+    let connection_id = if let Some(entry) = existing.as_ref() {
+        entry.id.clone()
+    } else {
+        format!(
+            "int-{}",
+            crate::util::unix_timestamp_millis()
+                .map_err(|error| format!("Falha ao gerar id da conexao: {error}"))?
+        )
+    };
 
     let credential_key = credential_key_for_connection(&connection_id);
+
+    if let Some(entry) = existing.as_ref() {
+        let previous_key = credential_key_for_connection(&entry.id);
+        if entry.credential_key != previous_key {
+            let _ = delete_credentials(&entry.credential_key);
+        }
+    }
+
     store_credentials(&credential_key, &credentials_json)?;
+    load_connection_credentials(&connection_id).map_err(|error| {
+        format!("Credenciais nao foram persistidas no secure storage: {error}")
+    })?;
 
-    let default_filter = json!({
-        "assigneeOnly": true,
-        "includeClosed": false
-    })
-    .to_string();
+    let sync_filter = sync_filter_json
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            existing
+                .as_ref()
+                .and_then(|entry| entry.sync_filter_json.clone())
+        })
+        .unwrap_or_else(default_sync_filter_json);
 
-    let connection = upsert_integration_connection(
+    let mut connection = upsert_integration_connection(
         &db_path,
         &workspace_id,
         &organization_id,
         &provider,
         display_name.as_deref(),
         &config_json,
+        &connection_id,
         &credential_key,
-        Some(&default_filter),
+        Some(&sync_filter),
     )?;
+    connection.has_credentials = true;
 
     Ok(SaveIntegrationConnectionResultDto { connection })
+}
+
+#[tauri::command]
+pub fn save_integration_sync_filter(
+    connection_id: String,
+    sync_filter_json: String,
+) -> Result<IntegrationConnectionDto, String> {
+    if sync_filter_json.trim().is_empty() {
+        return Err("Informe os filtros de sincronizacao.".to_string());
+    }
+
+    let db_path = resolve_db_path()?;
+    ensure_db_ready(&db_path)?;
+
+    let connection = fetch_integration_connection_by_id(&db_path, &connection_id)?
+        .ok_or_else(|| "Conexao nao encontrada.".to_string())?;
+
+    let mut updated =
+        update_integration_sync_filter(&db_path, &connection.id, sync_filter_json.trim())?;
+    updated.has_credentials = has_connection_credentials(&updated.id);
+    Ok(updated)
 }
 
 #[tauri::command]
@@ -82,7 +132,13 @@ pub fn delete_integration_connection(connection_id: String) -> Result<(), String
     let connection = fetch_integration_connection_by_id(&db_path, &connection_id)?
         .ok_or_else(|| "Conexao nao encontrada.".to_string())?;
 
-    delete_credentials(&connection.credential_key)?;
+    delete_imported_work_items_for_provider(
+        &db_path,
+        &connection.organization_id,
+        &connection.provider,
+    )?;
+    delete_pm_mappings_for_connection(&db_path, &connection_id)?;
+    delete_credentials(&credential_key_for_connection(&connection.id))?;
     remove_connection_record(&db_path, &connection_id)
 }
 
@@ -123,7 +179,7 @@ pub fn list_clickup_teams(
         let connection_id = connection_id.ok_or_else(|| "Informe connectionId ou apiToken.".to_string())?;
         let connection = fetch_integration_connection_by_id(&db_path, &connection_id)?
             .ok_or_else(|| "Conexao nao encontrada.".to_string())?;
-        load_credentials(&connection.credential_key)?
+        load_connection_credentials(&connection.id)?
     };
 
     let teams = list_teams_for_clickup(&credentials_json, None)?;
@@ -212,9 +268,9 @@ fn resolve_credentials_json(
     if let Some(connection_id) = connection_id {
         let db_path = resolve_db_path()?;
         ensure_db_ready(&db_path)?;
-        let connection = fetch_integration_connection_by_id(&db_path, connection_id)?
+        fetch_integration_connection_by_id(&db_path, connection_id)?
             .ok_or_else(|| "Conexao nao encontrada.".to_string())?;
-        return load_credentials(&connection.credential_key);
+        return load_connection_credentials(connection_id);
     }
 
     Err("Informe credenciais ou connectionId.".to_string())
@@ -290,4 +346,40 @@ fn map_connection_info(info: crate::integrations::PmConnectionInfo) -> PmConnect
         account_label: info.account_label,
         account_id: info.account_id,
     }
+}
+
+#[tauri::command]
+pub fn list_pm_external_projects(organization_id: String) -> Result<Vec<String>, String> {
+    let db_path = resolve_db_path()?;
+    ensure_db_ready(&db_path)?;
+    list_distinct_external_project_keys(&db_path, &organization_id)
+}
+
+#[tauri::command]
+pub fn list_pm_project_mappings_command(
+    organization_id: String,
+) -> Result<Vec<PmProjectMappingDto>, String> {
+    let db_path = resolve_db_path()?;
+    ensure_db_ready(&db_path)?;
+    list_pm_project_mappings(&db_path, &organization_id)
+}
+
+#[tauri::command]
+pub fn save_pm_project_mapping(
+    organization_id: String,
+    integration_connection_id: Option<String>,
+    external_project_key: String,
+    project_id: String,
+    default_repository_id: Option<String>,
+) -> Result<PmProjectMappingDto, String> {
+    let db_path = resolve_db_path()?;
+    ensure_db_ready(&db_path)?;
+    upsert_pm_project_mapping(
+        &db_path,
+        &organization_id,
+        integration_connection_id.as_deref(),
+        &external_project_key,
+        &project_id,
+        default_repository_id.as_deref(),
+    )
 }

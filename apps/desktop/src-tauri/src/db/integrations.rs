@@ -46,6 +46,15 @@ pub fn fetch_integration_connection_by_id(
     Ok(rows.first().map(map_integration_connection_row))
 }
 
+pub fn repair_integration_credential_keys(db_path: &Path) -> Result<(), String> {
+    sqlite_exec(
+        db_path,
+        "UPDATE integration_connections
+         SET credential_key = 'integration/' || id
+         WHERE credential_key != 'integration/' || id;",
+    )
+}
+
 pub fn upsert_integration_connection(
     db_path: &Path,
     workspace_id: &str,
@@ -53,6 +62,7 @@ pub fn upsert_integration_connection(
     provider: &str,
     display_name: Option<&str>,
     config_json: &str,
+    connection_id: &str,
     credential_key: &str,
     sync_filter_json: Option<&str>,
 ) -> Result<IntegrationConnectionDto, String> {
@@ -94,7 +104,6 @@ pub fn upsert_integration_connection(
             .ok_or_else(|| "Nao foi possivel carregar a conexao atualizada.".to_string());
     }
 
-    let connection_id = format!("int-{}", unix_timestamp_millis()?);
     sqlite_exec(
         db_path,
         &format!(
@@ -104,7 +113,7 @@ pub fn upsert_integration_connection(
             ) VALUES (
               '{}', '{}', '{}', '{}', {}, '{}', '{}', 1, 1, {}, '{}', '{}'
             );",
-            escape_sql(&connection_id),
+            escape_sql(connection_id),
             escape_sql(workspace_id),
             escape_sql(organization_id),
             escape_sql(provider),
@@ -117,7 +126,7 @@ pub fn upsert_integration_connection(
         ),
     )?;
 
-    fetch_integration_connection_by_id(db_path, &connection_id)?
+    fetch_integration_connection_by_id(db_path, connection_id)?
         .ok_or_else(|| "Nao foi possivel carregar a conexao criada.".to_string())
 }
 
@@ -129,6 +138,29 @@ pub fn delete_integration_connection(db_path: &Path, connection_id: &str) -> Res
             escape_sql(connection_id)
         ),
     )
+}
+
+pub fn update_integration_sync_filter(
+    db_path: &Path,
+    connection_id: &str,
+    sync_filter_json: &str,
+) -> Result<IntegrationConnectionDto, String> {
+    let now = iso_now()?;
+    sqlite_exec(
+        db_path,
+        &format!(
+            "UPDATE integration_connections
+             SET sync_filter_json = '{}',
+                 updated_at = '{}'
+             WHERE id = '{}';",
+            escape_sql(sync_filter_json),
+            escape_sql(&now),
+            escape_sql(connection_id)
+        ),
+    )?;
+
+    fetch_integration_connection_by_id(db_path, connection_id)?
+        .ok_or_else(|| "Nao foi possivel carregar a conexao atualizada.".to_string())
 }
 
 pub fn update_integration_sync_status(
@@ -162,17 +194,20 @@ pub fn upsert_imported_work_item(
     external_id: &str,
     external_key: Option<&str>,
     external_url: Option<&str>,
+    external_project_key: Option<&str>,
     title: &str,
     description: Option<&str>,
     status: &str,
     priority: i64,
     scheduled_for: Option<&str>,
 ) -> Result<(String, bool), String> {
+    use crate::db::resolve_pm_project_mapping;
+
     let now = iso_now()?;
     let existing = sqlite_json(
         db_path,
         &format!(
-            "SELECT id, project_id, primary_repository_id
+            "SELECT id, project_id, primary_repository_id, wcp_dismissed_at
              FROM work_items
              WHERE organization_id = '{}'
                AND external_provider = '{}'
@@ -184,8 +219,19 @@ pub fn upsert_imported_work_item(
         ),
     )?;
 
+    if crate::db::is_pm_import_dismissed(db_path, organization_id, external_provider, external_id)? {
+        if let Some(row) = existing.first() {
+            let work_item_id = get_string(row, "id").unwrap_or_default();
+            return Ok((work_item_id, false));
+        }
+        return Ok((String::new(), false));
+    }
+
     if let Some(row) = existing.first() {
         let work_item_id = get_string(row, "id").unwrap_or_default();
+        if get_optional_string(row, "wcp_dismissed_at").is_some() {
+            return Ok((work_item_id, false));
+        }
         let project_id = get_optional_string(row, "project_id");
         let primary_repository_id = get_optional_string(row, "primary_repository_id");
 
@@ -222,19 +268,34 @@ pub fn upsert_imported_work_item(
     }
 
     let work_item_id = format!("wi-{}", unix_timestamp_millis()?);
+    let mut project_id: Option<String> = None;
+    let mut primary_repository_id: Option<String> = None;
+
+    if let Some(project_key) = external_project_key {
+        if let Some((mapped_project_id, mapped_repository_id)) =
+            resolve_pm_project_mapping(db_path, organization_id, project_key)?
+        {
+            project_id = Some(mapped_project_id);
+            primary_repository_id = mapped_repository_id;
+        }
+    }
+
     sqlite_exec(
         db_path,
         &format!(
             "INSERT INTO work_items (
-              id, workspace_id, organization_id, title, description, status, priority,
+              id, workspace_id, organization_id, project_id, primary_repository_id,
+              title, description, status, priority,
               scheduled_for, source_type, external_provider, external_id, external_key,
               external_url, created_at, updated_at
             ) VALUES (
-              '{}', '{}', '{}', '{}', {}, '{}', {}, {}, 'imported', '{}', '{}', {}, {}, '{}', '{}'
+              '{}', '{}', '{}', {}, {}, '{}', {}, '{}', {}, {}, 'imported', '{}', '{}', {}, {}, '{}', '{}'
             );",
             escape_sql(&work_item_id),
             escape_sql(workspace_id),
             escape_sql(organization_id),
+            nullable_sql(project_id.as_deref()),
+            nullable_sql(primary_repository_id.as_deref()),
             escape_sql(title),
             nullable_sql(description),
             escape_sql(status),
@@ -312,7 +373,7 @@ fn map_integration_connection_row(row: &Value) -> IntegrationConnectionDto {
         display_name: get_optional_string(row, "display_name"),
         config_json: get_string(row, "config_json").unwrap_or_else(|| "{}".to_string()),
         credential_key: get_string(row, "credential_key").unwrap_or_default(),
-        has_credentials: true,
+        has_credentials: false,
         is_active: get_i64(row, "is_active").unwrap_or(1) == 1,
         sync_enabled: get_i64(row, "sync_enabled").unwrap_or(1) == 1,
         last_sync_at: get_optional_string(row, "last_sync_at"),
@@ -328,6 +389,7 @@ pub fn empty_sync_result() -> PmSyncResultDto {
         created: 0,
         updated: 0,
         unchanged: 0,
+        removed: 0,
         errors: Vec::new(),
     }
 }

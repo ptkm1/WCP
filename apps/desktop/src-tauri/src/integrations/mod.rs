@@ -1,14 +1,19 @@
+mod branch_ticket;
 mod clickup;
 mod credentials;
+mod filter;
 mod jira;
 mod sync;
 mod types;
 
+pub use branch_ticket::extract_ticket_keys_from_branch;
 pub use clickup::ClickUpClient;
 pub use credentials::{
     build_clickup_secret, build_jira_secret, credential_key_for_connection, delete_credentials,
-    load_credentials, store_credentials,
+    has_connection_credentials, has_credentials, load_connection_credentials, load_credentials,
+    store_credentials,
 };
+pub use filter::{build_jira_jql, default_sync_filter_json, parse_sync_filter};
 pub use jira::JiraClient;
 pub use sync::{get_deadline_alerts as compute_deadline_alerts, record_deadline_notification, sync_organization_pm_tasks};
 use types::PmProviderClient;

@@ -1,7 +1,7 @@
 use crate::db::{
     ensure_db_ready, fetch_active_session, fetch_all_dependencies, fetch_artifacts_for_work_item,
-    fetch_notes_for_entity, fetch_recent_sessions_by_work_item, fetch_repository_by_id,
-    fetch_task_dependencies, fetch_work_items, resolve_db_path,
+    fetch_notes_for_entity, fetch_persisted_today_plan, fetch_recent_sessions_by_work_item,
+    fetch_repository_by_id, fetch_task_dependencies, fetch_work_items, resolve_db_path,
 };
 use crate::domain::{
     build_recoverable_context, build_today_focus, build_today_plan, build_today_summary,
@@ -18,7 +18,8 @@ pub fn load_dashboard_data() -> Result<DashboardDto, String> {
     let active_session = fetch_active_session(&db_path)?;
     let dependencies = fetch_all_dependencies(&db_path)?;
     let summary = build_today_summary(&backlog);
-    let today_plan = build_today_plan(&backlog, &dependencies);
+    let today_plan = fetch_persisted_today_plan(&db_path)?
+        .unwrap_or_else(|| build_today_plan(&backlog, &dependencies));
     let current_task = resolve_focus_task(&backlog, &today_plan, &active_session);
     let focus_dependencies = if let Some(task) = current_task.as_ref() {
         fetch_task_dependencies(&db_path, &task.id)?

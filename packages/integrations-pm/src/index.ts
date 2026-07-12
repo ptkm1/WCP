@@ -278,6 +278,59 @@ function parseScheduledDate(value: string): Date | null {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
+const JIRA_TICKET_KEY_PATTERN = /[A-Z][A-Z0-9]+-\d+/g;
+
+export type WorkItemDeadlineKind =
+  | "overdue"
+  | "due_today"
+  | "due_soon"
+  | "no_deadline";
+
+export function extractTicketKeysFromBranch(branch: string): string[] {
+  const matches = branch.toUpperCase().match(JIRA_TICKET_KEY_PATTERN) ?? [];
+  return [...new Set(matches)];
+}
+
+export function classifyWorkItemDeadline(
+  scheduledFor: string | null | undefined,
+  status: string,
+  options?: { now?: Date; soonThresholdHours?: number },
+): WorkItemDeadlineKind {
+  if (!scheduledFor?.trim()) {
+    return "no_deadline";
+  }
+  if (status === "done" || status === "archived") {
+    return "no_deadline";
+  }
+
+  const now = options?.now ?? new Date();
+  const due = parseScheduledDate(scheduledFor);
+  if (!due) {
+    return "no_deadline";
+  }
+
+  const hoursUntilDue = (due.getTime() - now.getTime()) / (1000 * 60 * 60);
+  if (hoursUntilDue < 0) {
+    return "overdue";
+  }
+
+  const isSameDay =
+    due.getFullYear() === now.getFullYear() &&
+    due.getMonth() === now.getMonth() &&
+    due.getDate() === now.getDate();
+
+  if (isSameDay) {
+    return "due_today";
+  }
+
+  const threshold = options?.soonThresholdHours ?? 168;
+  if (hoursUntilDue <= threshold) {
+    return "due_soon";
+  }
+
+  return "no_deadline";
+}
+
 export function externalTaskToSnapshot(
   provider: PmProvider,
   patch: ReturnType<typeof mapJiraIssueToWorkItemPatch>,

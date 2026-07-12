@@ -117,9 +117,6 @@ pub fn create_repository(
     )?;
 
     let environment_profile_id = get_optional_string(org_row, "environment_profile_id");
-    let git_user_name = get_optional_string(org_row, "git_user_name");
-    let git_user_email = get_optional_string(org_row, "git_user_email");
-    let ssh_host_alias = get_optional_string(org_row, "ssh_host_alias");
     let organization_name = get_optional_string(org_row, "organization_name");
 
     sqlite_exec(
@@ -130,15 +127,11 @@ pub fn create_repository(
               ssh_host_alias, provider_username, provider_account_label, enforce_pre_push_check,
               created_at, updated_at
             ) VALUES (
-              '{}', '{}', {}, {}, {}, {}, {}, {}, 1, '{}', '{}'
+              '{}', '{}', {}, NULL, NULL, NULL, NULL, {}, 1, '{}', '{}'
             );",
             escape_sql(&identity_id),
             escape_sql(&repository_id),
             optional_sql_string(environment_profile_id.as_deref()),
-            optional_sql_string(git_user_name.as_deref()),
-            optional_sql_string(git_user_email.as_deref()),
-            optional_sql_string(ssh_host_alias.as_deref()),
-            optional_sql_string(git_user_name.as_deref()),
             optional_sql_string(organization_name.as_deref()),
             escape_sql(&now),
             escape_sql(&now)

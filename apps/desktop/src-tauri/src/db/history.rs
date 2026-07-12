@@ -20,8 +20,19 @@ pub fn list_context_history(
                     repository_id, repository_name, organization_id, organization_name
              FROM (
               SELECT 'session' AS kind, s.id AS id,
-                     COALESCE(s.goal, 'Sessao sem objetivo') AS title,
-                     trim(COALESCE(s.result, '') || CASE WHEN s.branch_name IS NOT NULL AND s.branch_name != '' THEN ' · ' || s.branch_name ELSE '' END) AS detail,
+                     COALESCE(
+                       CASE
+                         WHEN wi.external_key IS NOT NULL AND wi.external_key != ''
+                           THEN wi.external_key || ' · ' || COALESCE(s.goal, 'Sessao sem objetivo')
+                         ELSE COALESCE(s.goal, 'Sessao sem objetivo')
+                       END,
+                       'Sessao sem objetivo'
+                     ) AS title,
+                     trim(
+                       COALESCE(s.result, '')
+                       || CASE WHEN s.branch_name IS NOT NULL AND s.branch_name != '' THEN ' · ' || s.branch_name ELSE '' END
+                       || CASE WHEN wi.external_provider IS NOT NULL AND wi.external_provider != '' THEN ' · ' || wi.external_provider ELSE '' END
+                     ) AS detail,
                      s.started_at AS created_at,
                      s.work_item_id AS work_item_id,
                      wi.title AS work_item_title,

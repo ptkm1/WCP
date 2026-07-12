@@ -18,6 +18,7 @@ pub struct ExternalTaskSnapshot {
     pub external_id: String,
     pub external_key: Option<String>,
     pub external_url: Option<String>,
+    pub external_project_key: Option<String>,
     pub title: String,
     pub description: Option<String>,
     pub status: String,
@@ -25,11 +26,25 @@ pub struct ExternalTaskSnapshot {
     pub priority: i64,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct SyncFilter {
     pub assignee_only: bool,
     pub include_closed: bool,
+    pub focus_current_work: bool,
+    pub updated_within_days: u32,
     pub jql: Option<String>,
+}
+
+impl Default for SyncFilter {
+    fn default() -> Self {
+        Self {
+            assignee_only: true,
+            include_closed: false,
+            focus_current_work: true,
+            updated_within_days: super::filter::DEFAULT_UPDATED_WITHIN_DAYS,
+            jql: None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize)]

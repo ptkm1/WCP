@@ -363,8 +363,32 @@ pub fn update_environment_profile_for_org(
         )?;
     }
 
+    clear_repository_identity_overrides_for_org(db_path, organization_id)?;
+
     fetch_organization_by_id(db_path, organization_id)?
         .ok_or_else(|| "Nao foi possivel carregar o perfil atualizado.".to_string())
+}
+
+pub fn clear_repository_identity_overrides_for_org(
+    db_path: &Path,
+    organization_id: &str,
+) -> Result<(), String> {
+    let now = iso_now()?;
+    sqlite_exec(
+        db_path,
+        &format!(
+            "UPDATE repository_identities
+             SET git_user_name = NULL,
+                 git_user_email = NULL,
+                 ssh_host_alias = NULL,
+                 updated_at = '{}'
+             WHERE repository_id IN (
+               SELECT id FROM repositories WHERE organization_id = '{}'
+             );",
+            escape_sql(&now),
+            escape_sql(organization_id)
+        ),
+    )
 }
 
 fn map_organization_row(row: &serde_json::Value) -> OrganizationListItemDto {

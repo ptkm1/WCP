@@ -1,6 +1,9 @@
 use crate::db::{
-    ensure_db_ready, escape_sql, fetch_artifact_by_id, fetch_note_by_id, fetch_repository_by_id,
-    fetch_session_by_id, nullable_sql, resolve_db_path, resolve_primary_workspace_id, sqlite_exec,
+    commit_today_plan, dismiss_work_item as persist_dismiss_work_item, ensure_db_ready,
+    escape_sql, fetch_artifact_by_id, fetch_note_by_id, fetch_repository_by_id,
+    fetch_session_by_id, fetch_work_item_by_id, find_work_item_by_external_key, nullable_sql,
+    resolve_db_path, resolve_primary_workspace_id, restore_dismissed_work_item as persist_restore_dismissed_work_item,
+    sqlite_exec,
 };
 use crate::domain::{
     create_work_item as persist_work_item, create_work_item_dependency as insert_dependency,
@@ -8,10 +11,12 @@ use crate::domain::{
     load_task_context, update_work_item as persist_work_item_update,
 };
 use crate::dto::{
-    AttachArtifactResultDto, EndSessionResultDto, SaveNoteResultDto, SaveWorkItemResultDto,
-    StartSessionResultDto, TaskContextDto,
+    ApplyWorkItemContextResultDto, AttachArtifactResultDto, CommitTodayPlanResultDto,
+    EndSessionResultDto, SaveNoteResultDto, SaveWorkItemResultDto, StartSessionResultDto,
+    TaskContextDto,
 };
-use crate::git::git_snapshot;
+use crate::git::{apply_repository_full_context, git_snapshot, load_guardrail_for_repository};
+use crate::integrations::extract_ticket_keys_from_branch;
 use crate::util::{iso_now, unix_timestamp_millis};
 
 #[tauri::command]
@@ -86,6 +91,24 @@ pub fn update_work_item(
         resume_summary,
     )?;
 
+    Ok(SaveWorkItemResultDto { task })
+}
+
+#[tauri::command]
+pub fn dismiss_work_item_command(work_item_id: String) -> Result<SaveWorkItemResultDto, String> {
+    let db_path = resolve_db_path()?;
+    ensure_db_ready(&db_path)?;
+    let task = persist_dismiss_work_item(&db_path, &work_item_id)?;
+    Ok(SaveWorkItemResultDto { task })
+}
+
+#[tauri::command]
+pub fn restore_dismissed_work_item_command(
+    work_item_id: String,
+) -> Result<SaveWorkItemResultDto, String> {
+    let db_path = resolve_db_path()?;
+    ensure_db_ready(&db_path)?;
+    let task = persist_restore_dismissed_work_item(&db_path, &work_item_id)?;
     Ok(SaveWorkItemResultDto { task })
 }
 
@@ -180,7 +203,29 @@ pub fn start_session(
     let session = fetch_session_by_id(&db_path, &session_id)?
         .ok_or_else(|| "Nao foi possivel carregar a sessao criada".to_string())?;
 
-    Ok(StartSessionResultDto { session })
+    let suggested_work_item_id = if work_item_id.is_none() {
+        repository
+            .as_ref()
+            .and_then(|repo| repo.organization_id.as_deref())
+            .and_then(|organization_id| {
+                branch_name.as_deref().and_then(|branch| {
+                    extract_ticket_keys_from_branch(branch)
+                        .into_iter()
+                        .find_map(|key| {
+                            find_work_item_by_external_key(&db_path, organization_id, &key)
+                                .ok()
+                                .flatten()
+                        })
+                })
+            })
+    } else {
+        None
+    };
+
+    Ok(StartSessionResultDto {
+        session,
+        suggested_work_item_id,
+    })
 }
 
 #[tauri::command]
@@ -315,4 +360,55 @@ pub fn attach_task_artifact(
         .ok_or_else(|| "Nao foi possivel carregar o artefato criado".to_string())?;
 
     Ok(AttachArtifactResultDto { artifact })
+}
+
+#[tauri::command]
+pub fn apply_work_item_context(work_item_id: String) -> Result<ApplyWorkItemContextResultDto, String> {
+    let db_path = resolve_db_path()?;
+    ensure_db_ready(&db_path)?;
+
+    let task = fetch_work_item_by_id(&db_path, &work_item_id)?
+        .ok_or_else(|| "Tarefa nao encontrada.".to_string())?;
+
+    let Some(repository_id) = task.primary_repository_id.clone() else {
+        return Ok(ApplyWorkItemContextResultDto {
+            work_item_id,
+            needs_repository_link: true,
+            repository_id: None,
+            repository_name: None,
+            context: None,
+            guardrail: None,
+        });
+    };
+
+    let repository = fetch_repository_by_id(&db_path, &repository_id)?
+        .ok_or_else(|| "Repositorio vinculado nao encontrado.".to_string())?;
+
+    let guardrail = load_guardrail_for_repository(&db_path, &repository_id)?;
+    let ssh_host_alias = guardrail
+        .as_ref()
+        .and_then(|entry| entry.expected_ssh_host_alias.as_deref());
+
+    let context = apply_repository_full_context(&db_path, &repository_id, ssh_host_alias)?;
+    let guardrail = load_guardrail_for_repository(&db_path, &repository_id)?;
+
+    Ok(ApplyWorkItemContextResultDto {
+        work_item_id,
+        needs_repository_link: false,
+        repository_id: Some(repository_id),
+        repository_name: Some(repository.name),
+        context: Some(context),
+        guardrail,
+    })
+}
+
+#[tauri::command]
+pub fn commit_today_plan_command(
+    work_item_ids: Vec<String>,
+) -> Result<CommitTodayPlanResultDto, String> {
+    let db_path = resolve_db_path()?;
+    ensure_db_ready(&db_path)?;
+    let today_plan = commit_today_plan(&db_path, &work_item_ids)?;
+
+    Ok(CommitTodayPlanResultDto { today_plan })
 }

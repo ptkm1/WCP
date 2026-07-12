@@ -1,4 +1,5 @@
 use super::credentials::parse_jira_credentials;
+use super::filter::build_jira_jql;
 use super::types::{
     ExternalTaskSnapshot, PmConnectionInfo, PmProviderClient, SyncFilter,
 };
@@ -79,14 +80,7 @@ impl PmProviderClient for JiraClient {
     }
 
     fn list_assigned_tasks(&self, filter: &SyncFilter) -> Result<Vec<ExternalTaskSnapshot>, String> {
-        let jql = filter.jql.clone().unwrap_or_else(|| {
-            if filter.include_closed {
-                "assignee = currentUser() ORDER BY duedate ASC".to_string()
-            } else {
-                "assignee = currentUser() AND resolution = Unresolved ORDER BY duedate ASC"
-                    .to_string()
-            }
-        });
+        let jql = build_jira_jql(filter);
 
         let response = self
             .client
@@ -96,7 +90,7 @@ impl PmProviderClient for JiraClient {
             .json(&json!({
                 "jql": jql,
                 "maxResults": 100,
-                "fields": ["summary", "description", "status", "duedate", "priority"]
+                "fields": ["summary", "description", "status", "duedate", "priority", "project"]
             }))
             .send()
             .map_err(|error| format!("Falha ao buscar issues no Jira: {error}"))?;
@@ -141,8 +135,9 @@ fn map_jira_issue(site_url: &str, issue: JiraIssue) -> Option<ExternalTaskSnapsh
 
     Some(ExternalTaskSnapshot {
         external_id: issue.id?,
-        external_key: Some(key),
+        external_key: Some(key.clone()),
         external_url,
+        external_project_key: fields.project.and_then(|project| project.key),
         title: fields.summary.unwrap_or_else(|| "Sem titulo".to_string()),
         description: fields.description.and_then(flatten_jira_description),
         status: normalize_pm_status("jira", &status_label),
@@ -205,6 +200,12 @@ struct JiraIssueFields {
     status: Option<JiraStatus>,
     duedate: Option<String>,
     priority: Option<JiraPriority>,
+    project: Option<JiraProject>,
+}
+
+#[derive(Debug, Deserialize)]
+struct JiraProject {
+    key: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

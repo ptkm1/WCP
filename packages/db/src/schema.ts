@@ -166,6 +166,7 @@ export const workItems = sqliteTable("work_items", {
   externalId: text("external_id"),
   externalKey: text("external_key"),
   externalUrl: text("external_url"),
+  wcpDismissedAt: text("wcp_dismissed_at"),
   ...timestamps,
 });
 
@@ -324,4 +325,22 @@ export const activityEvents = sqliteTable("activity_events", {
   eventType: text("event_type").notNull(),
   payloadJson: text("payload_json"),
   createdAt: text("created_at").notNull(),
+});
+
+export const pmProjectMappings = sqliteTable("pm_project_mappings", {
+  id: text("id").primaryKey(),
+  organizationId: text("organization_id")
+    .notNull()
+    .references(() => organizations.id),
+  integrationConnectionId: text("integration_connection_id").references(
+    () => integrationConnections.id,
+  ),
+  externalProjectKey: text("external_project_key").notNull(),
+  projectId: text("project_id")
+    .notNull()
+    .references(() => projects.id),
+  defaultRepositoryId: text("default_repository_id").references(
+    () => repositories.id,
+  ),
+  ...timestamps,
 });
