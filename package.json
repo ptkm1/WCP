@@ -14,6 +14,7 @@
     "dev:mobile": "pnpm --filter @wcp/mobile dev",
     "setup:desktop": "pnpm db:migrate && pnpm db:seed",
     "start:desktop": "pnpm setup:desktop && pnpm dev:desktop:tauri",
+    "build:desktop": "pnpm --filter @wcp/desktop tauri:build",
     "build": "pnpm -r build",
     "lint": "pnpm -r lint",
     "typecheck": "pnpm -r typecheck",

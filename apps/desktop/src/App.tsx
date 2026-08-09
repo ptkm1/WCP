@@ -5735,7 +5735,7 @@ export function App() {
               }}
             >
               <DialogContent
-                className="max-h-[90vh] w-fit max-w-[90vw] gap-0 overflow-x-hidden overflow-y-auto p-0 sm:p-0"
+                className="max-h-[90vh] w-[90vw] max-w-[90vw] gap-0 overflow-x-hidden overflow-y-auto p-0 sm:p-0"
                 onCloseClick={() => attemptCloseTaskDetailDialog()}
                 onEscapeKeyDown={(event) => {
                   event.preventDefault();
@@ -5761,7 +5761,7 @@ export function App() {
                       : (currentTask?.title ?? "Detalhe da tarefa")}
                   </DialogTitle>
                 </DialogHeader>
-                <div className="min-w-[min(90vw,20rem)] max-w-[90vw] p-6">
+                <div className="w-full p-6">
                   <TaskDetailPanel
                     taskFormMode={taskFormMode}
                     currentTask={currentTask}

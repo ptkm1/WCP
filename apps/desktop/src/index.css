@@ -111,7 +111,11 @@
   }
 
   .app-sidebar-brand {
-    @apply hidden lg:mb-6 lg:flex lg:h-10 lg:w-10 lg:items-center lg:justify-center lg:rounded-xl lg:border lg:border-primary/20 lg:bg-primary/10;
+    @apply hidden lg:mb-6 lg:flex lg:h-10 lg:w-10 lg:items-center lg:justify-center lg:overflow-hidden lg:rounded-[10px];
+  }
+
+  .app-sidebar-brand-logo {
+    @apply h-10 w-10 rounded-[10px] object-cover;
   }
 
   .app-sidebar-brand-label {

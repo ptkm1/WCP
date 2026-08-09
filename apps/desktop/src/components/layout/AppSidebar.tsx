@@ -2,7 +2,6 @@ import { OrganizationAvatar } from "@/components/app-ui";
 import { Button } from "@/components/ui/button";
 import { MAIN_VIEW_ICONS, type MainView } from "@/lib/app-icons";
 import { cn } from "@/lib/utils";
-import { Sparkles } from "lucide-react";
 
 const NAV_ITEMS: Array<{ view: MainView; label: string }> = [
   { view: "today", label: "Hoje" },
@@ -29,9 +28,16 @@ export function AppSidebar({
 }) {
   return (
     <aside className="app-sidebar" aria-label="Navegacao principal">
-      <div className="app-sidebar-brand" title="Contexto">
-        <Sparkles className="h-5 w-5 text-primary" aria-hidden />
-        <span className="app-sidebar-brand-label">Contexto</span>
+      <div className="app-sidebar-brand" title="Work Context Platform">
+        <img
+          src="/favicon.png"
+          alt=""
+          className="app-sidebar-brand-logo"
+          width={28}
+          height={28}
+          aria-hidden
+        />
+        <span className="app-sidebar-brand-label">WCP</span>
       </div>
 
       <nav className="app-sidebar-nav">

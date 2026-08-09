@@ -17,6 +17,8 @@ use crate::integrations::{
     load_connection_credentials, record_deadline_notification, store_credentials,
     sync_organization_pm_tasks,
 };
+use tauri::AppHandle;
+use tauri_plugin_notification::NotificationExt;
 
 #[tauri::command]
 pub fn list_integration_connections(
@@ -216,7 +218,7 @@ pub fn get_deadline_alerts() -> Result<DeadlineAlertsDto, String> {
 }
 
 #[tauri::command]
-pub fn notify_deadline_alerts() -> Result<usize, String> {
+pub fn notify_deadline_alerts(app: AppHandle) -> Result<usize, String> {
     let db_path = resolve_db_path()?;
     ensure_db_ready(&db_path)?;
     let workspace_id = resolve_primary_workspace_id(&db_path)?;
@@ -246,9 +248,13 @@ pub fn notify_deadline_alerts() -> Result<usize, String> {
                 "due_today" => "Entrega hoje",
                 _ => "Prazo em 24h",
             };
-            let _ = notify_rust::Notification::new()
-                .summary(title)
-                .body(&format!("{} · {}", item.title, item.scheduled_for))
+            // Usa o plugin do Tauri (bundle id do app). notify-rust no macOS
+            // dispara o dialogo "Where is use_default?" do Launch Services.
+            let _ = app
+                .notification()
+                .builder()
+                .title(title)
+                .body(format!("{} · {}", item.title, item.scheduled_for))
                 .show();
             sent += 1;
         }

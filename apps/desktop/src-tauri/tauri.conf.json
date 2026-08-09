@@ -10,8 +10,21 @@
     "devUrl": "http://localhost:1420"
   },
   "bundle": {
-    "active": false,
-    "icon": []
+    "active": true,
+    "targets": ["app", "dmg"],
+    "category": "DeveloperTool",
+    "shortDescription": "Contexto de trabalho, identidade Git e tarefas",
+    "longDescription": "Work Context Platform ajuda a alternar contexto entre empresas e repositorios, aplicar identidade Git e acompanhar tarefas.",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "macOS": {
+      "minimumSystemVersion": "11.0"
+    }
   },
   "app": {
     "windows": [

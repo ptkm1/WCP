@@ -55,12 +55,7 @@ export function FormDialog({
             <DialogDescription>{description}</DialogDescription>
           ) : null}
         </DialogHeader>
-        <div
-          className={cn(
-            "grid w-full min-w-[min(90vw,18rem)] max-w-[90vw] gap-4 py-1",
-            className,
-          )}
-        >
+        <div className={cn("grid w-full gap-4 py-1", className)}>
           {children}
         </div>
         <DialogFooter>
