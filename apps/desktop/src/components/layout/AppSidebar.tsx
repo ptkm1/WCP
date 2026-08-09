@@ -14,6 +14,7 @@ const NAV_ITEMS: Array<{ view: MainView; label: string }> = [
 export function AppSidebar({
   value,
   onChange,
+  todayBadgeCount = 0,
   organizationName,
   organizationKind,
   organizationLogoUrl,
@@ -21,6 +22,7 @@ export function AppSidebar({
 }: {
   value: MainView;
   onChange: (view: MainView) => void;
+  todayBadgeCount?: number;
   organizationName?: string | null;
   organizationKind?: string | null;
   organizationLogoUrl?: string | null;
@@ -44,6 +46,8 @@ export function AppSidebar({
         {NAV_ITEMS.map(({ view, label }) => {
           const Icon = MAIN_VIEW_ICONS[view];
           const active = value === view;
+          const badge =
+            view === "today" && todayBadgeCount > 0 ? todayBadgeCount : null;
 
           return (
             <Button
@@ -51,8 +55,8 @@ export function AppSidebar({
               type="button"
               variant="ghost"
               size="icon"
-              title={label}
-              aria-label={label}
+              title={badge ? `${label} · ${badge} na Inbox` : label}
+              aria-label={badge ? `${label}, ${badge} na Inbox` : label}
               aria-current={active ? "page" : undefined}
               className={cn(
                 "app-sidebar-nav-item",
@@ -60,7 +64,14 @@ export function AppSidebar({
               )}
               onClick={() => onChange(view)}
             >
-              <Icon className="h-5 w-5" aria-hidden />
+              <span className="relative">
+                <Icon className="h-5 w-5" aria-hidden />
+                {badge ? (
+                  <span className="absolute -right-2 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-semibold text-white">
+                    {badge > 9 ? "9+" : badge}
+                  </span>
+                ) : null}
+              </span>
               <span className="app-sidebar-nav-label">{label}</span>
             </Button>
           );

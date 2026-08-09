@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -47,6 +47,7 @@ pub struct WorkItemDto {
     pub external_key: Option<String>,
     pub external_url: Option<String>,
     pub wcp_dismissed_at: Option<String>,
+    pub wcp_inbox_at: Option<String>,
     pub updated_at: String,
 }
 
@@ -138,11 +139,141 @@ pub struct RepositoryGuardrailDto {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ContinueWorkDto {
+    pub work_item_id: String,
+    pub title: String,
+    pub external_key: Option<String>,
+    pub organization_id: Option<String>,
+    pub organization_name: Option<String>,
+    pub repository_id: Option<String>,
+    pub repository_name: Option<String>,
+    pub branch_name: Option<String>,
+    pub last_activity_at: String,
+    pub resume_summary: Option<String>,
+    pub stopped_here: Option<String>,
+    pub next_step: Option<String>,
+    pub session_id: Option<String>,
+    pub session_goal: Option<String>,
+    pub session_decisions: Option<String>,
+    pub session_result: Option<String>,
+    pub session_active: bool,
+    pub handoff_from_yesterday: bool,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionGitCommitDto {
+    pub sha: String,
+    pub subject: String,
+}
+
+#[derive(Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionGitActivityDto {
+    pub started_branch: Option<String>,
+    pub ended_branch: Option<String>,
+    pub started_head: Option<String>,
+    pub ended_head: Option<String>,
+    #[serde(default)]
+    pub commits: Vec<SessionGitCommitDto>,
+    pub worktree_path: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionHandoffArtifactDto {
+    pub title: String,
+    pub url: Option<String>,
+    pub artifact_type: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionHandoffSummaryDto {
+    pub session_id: String,
+    pub started_at: String,
+    pub duration_label: String,
+    pub work_item_id: Option<String>,
+    pub work_item_title: Option<String>,
+    pub external_key: Option<String>,
+    pub organization_name: Option<String>,
+    pub project_name: Option<String>,
+    pub repository_id: Option<String>,
+    pub repository_name: Option<String>,
+    pub branch_name: Option<String>,
+    pub ended_branch: Option<String>,
+    pub started_head: Option<String>,
+    pub ended_head: Option<String>,
+    pub commits: Vec<SessionGitCommitDto>,
+    pub worktree_path: Option<String>,
+    pub has_uncommitted_changes: bool,
+    pub uncommitted_count: usize,
+    pub artifacts: Vec<SessionHandoffArtifactDto>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkingTreeStatusDto {
+    pub dirty: bool,
+    pub changed_count: usize,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextSwitchOriginDto {
+    pub organization_id: Option<String>,
+    pub organization_name: Option<String>,
+    pub work_item_id: Option<String>,
+    pub work_item_title: Option<String>,
+    pub external_key: Option<String>,
+    pub repository_id: Option<String>,
+    pub repository_name: Option<String>,
+    pub branch_name: Option<String>,
+    pub session_id: Option<String>,
+    pub session_active: bool,
+    pub last_note: Option<String>,
+    pub has_uncommitted_changes: bool,
+    pub uncommitted_count: usize,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RepositoryBranchDto {
+    pub repository_id: String,
+    pub branch_name: Option<String>,
+    pub local_path: Option<String>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MultiFocusTaskDto {
+    pub id: String,
+    pub title: String,
+    pub external_key: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MultiFocusGroupDto {
+    pub group_key: String,
+    pub organization_id: Option<String>,
+    pub organization_name: Option<String>,
+    pub project_id: Option<String>,
+    pub project_name: Option<String>,
+    pub repository_id: Option<String>,
+    pub repository_name: Option<String>,
+    pub tasks: Vec<MultiFocusTaskDto>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DashboardDto {
     pub summary: TodaySummary,
     pub today_focus: TodayFocusDto,
     pub current_task: Option<WorkItemDto>,
     pub active_session: Option<SessionLogDto>,
+    pub continue_work: Option<ContinueWorkDto>,
+    pub multi_focus_groups: Vec<MultiFocusGroupDto>,
     pub recent_task_sessions: Vec<SessionLogDto>,
     pub task_notes: Vec<KnowledgeNoteDto>,
     pub task_artifacts: Vec<ArtifactDto>,
@@ -150,6 +281,7 @@ pub struct DashboardDto {
     pub recoverable_context: Vec<RecoverableContextCandidateDto>,
     pub guardrail: Option<RepositoryGuardrailDto>,
     pub backlog: Vec<WorkItemDto>,
+    pub inbox: Vec<WorkItemDto>,
 }
 
 #[derive(Serialize)]
@@ -276,6 +408,7 @@ pub struct SessionLogDto {
     pub source_type: String,
     pub work_item_external_key: Option<String>,
     pub work_item_external_provider: Option<String>,
+    pub git_activity: Option<SessionGitActivityDto>,
 }
 
 #[derive(Serialize)]
@@ -387,6 +520,8 @@ pub struct ContextEventDto {
     pub title: String,
     pub detail: String,
     pub created_at: String,
+    pub ended_at: Option<String>,
+    pub payload_json: Option<String>,
     pub work_item_id: Option<String>,
     pub work_item_title: Option<String>,
     pub repository_id: Option<String>,
@@ -477,6 +612,7 @@ pub struct GitSnapshot {
     pub git_user_email: Option<String>,
     pub ssh_host_alias: Option<String>,
     pub branch_name: Option<String>,
+    pub head_sha: Option<String>,
     pub last_commit_subject: Option<String>,
 }
 
@@ -542,6 +678,7 @@ pub struct PmSyncResultDto {
     pub updated: usize,
     pub unchanged: usize,
     pub removed: usize,
+    pub inbox_created: usize,
     pub errors: Vec<String>,
 }
 

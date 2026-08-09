@@ -287,9 +287,9 @@ pub fn upsert_imported_work_item(
               id, workspace_id, organization_id, project_id, primary_repository_id,
               title, description, status, priority,
               scheduled_for, source_type, external_provider, external_id, external_key,
-              external_url, created_at, updated_at
+              external_url, wcp_inbox_at, created_at, updated_at
             ) VALUES (
-              '{}', '{}', '{}', {}, {}, '{}', {}, '{}', {}, {}, 'imported', '{}', '{}', {}, {}, '{}', '{}'
+              '{}', '{}', '{}', {}, {}, '{}', {}, '{}', {}, {}, 'imported', '{}', '{}', {}, {}, '{}', '{}', '{}'
             );",
             escape_sql(&work_item_id),
             escape_sql(workspace_id),
@@ -305,6 +305,7 @@ pub fn upsert_imported_work_item(
             escape_sql(external_id),
             nullable_sql(external_key),
             nullable_sql(external_url),
+            escape_sql(&now),
             escape_sql(&now),
             escape_sql(&now)
         ),
@@ -390,6 +391,7 @@ pub fn empty_sync_result() -> PmSyncResultDto {
         updated: 0,
         unchanged: 0,
         removed: 0,
+        inbox_created: 0,
         errors: Vec::new(),
     }
 }

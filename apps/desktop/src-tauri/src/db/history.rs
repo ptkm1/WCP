@@ -16,7 +16,7 @@ pub fn list_context_history(
     let rows = sqlite_json(
         db_path,
         &format!(
-            "SELECT kind, id, title, detail, created_at, work_item_id, work_item_title,
+            "SELECT kind, id, title, detail, created_at, ended_at, payload_json, work_item_id, work_item_title,
                     repository_id, repository_name, organization_id, organization_name
              FROM (
               SELECT 'session' AS kind, s.id AS id,
@@ -34,16 +34,18 @@ pub fn list_context_history(
                        || CASE WHEN wi.external_provider IS NOT NULL AND wi.external_provider != '' THEN ' · ' || wi.external_provider ELSE '' END
                      ) AS detail,
                      s.started_at AS created_at,
+                     s.ended_at AS ended_at,
+                     s.links_json AS payload_json,
                      s.work_item_id AS work_item_id,
                      wi.title AS work_item_title,
                      s.repository_id AS repository_id,
                      r.name AS repository_name,
-                     COALESCE(wi.organization_id, r.organization_id) AS organization_id,
+                     COALESCE(s.organization_id, wi.organization_id, r.organization_id) AS organization_id,
                      o.name AS organization_name
               FROM session_logs s
               LEFT JOIN work_items wi ON wi.id = s.work_item_id
               LEFT JOIN repositories r ON r.id = s.repository_id
-              LEFT JOIN organizations o ON o.id = COALESCE(wi.organization_id, r.organization_id)
+              LEFT JOIN organizations o ON o.id = COALESCE(s.organization_id, wi.organization_id, r.organization_id)
 
               UNION ALL
 
@@ -51,24 +53,35 @@ pub fn list_context_history(
                      'Decisao registrada' AS title,
                      s.decisions AS detail,
                      COALESCE(s.ended_at, s.started_at) AS created_at,
+                     NULL AS ended_at,
+                     NULL AS payload_json,
                      s.work_item_id AS work_item_id,
                      wi.title AS work_item_title,
                      s.repository_id AS repository_id,
                      r.name AS repository_name,
-                     COALESCE(wi.organization_id, r.organization_id) AS organization_id,
+                     COALESCE(s.organization_id, wi.organization_id, r.organization_id) AS organization_id,
                      o.name AS organization_name
               FROM session_logs s
               LEFT JOIN work_items wi ON wi.id = s.work_item_id
               LEFT JOIN repositories r ON r.id = s.repository_id
-              LEFT JOIN organizations o ON o.id = COALESCE(wi.organization_id, r.organization_id)
+              LEFT JOIN organizations o ON o.id = COALESCE(s.organization_id, wi.organization_id, r.organization_id)
               WHERE COALESCE(s.decisions, '') != ''
 
               UNION ALL
 
-              SELECT 'note' AS kind, n.id AS id,
-                     n.title AS title,
+              SELECT CASE
+                       WHEN n.note_type = 'decision' THEN 'decision'
+                       ELSE 'note'
+                     END AS kind,
+                     n.id AS id,
+                     CASE
+                       WHEN n.note_type = 'multi_focus' THEN 'Multi-foco · ' || n.title
+                       ELSE n.title
+                     END AS title,
                      substr(n.content, 1, 160) AS detail,
                      n.created_at AS created_at,
+                     NULL AS ended_at,
+                     NULL AS payload_json,
                      CASE WHEN n.entity_type = 'work_item' THEN n.entity_id ELSE NULL END AS work_item_id,
                      wi.title AS work_item_title,
                      COALESCE(wi.primary_repository_id, CASE WHEN n.entity_type = 'repository' THEN n.entity_id ELSE NULL END) AS repository_id,
@@ -89,6 +102,8 @@ pub fn list_context_history(
                      n.title AS title,
                      substr(n.content, 1, 160) AS detail,
                      n.created_at AS created_at,
+                     NULL AS ended_at,
+                     NULL AS payload_json,
                      NULL AS work_item_id,
                      NULL AS work_item_title,
                      n.entity_id AS repository_id,
@@ -105,6 +120,8 @@ pub fn list_context_history(
                      COALESCE(a.title, a.type) AS title,
                      COALESCE(a.url, a.type) AS detail,
                      a.created_at AS created_at,
+                     NULL AS ended_at,
+                     NULL AS payload_json,
                      l.from_entity_id AS work_item_id,
                      wi.title AS work_item_title,
                      a.repository_id AS repository_id,
@@ -126,6 +143,8 @@ pub fn list_context_history(
                      'Bloqueio ativo' AS title,
                      wi.blocked_reason AS detail,
                      wi.updated_at AS created_at,
+                     NULL AS ended_at,
+                     NULL AS payload_json,
                      wi.id AS work_item_id,
                      wi.title AS work_item_title,
                      wi.primary_repository_id AS repository_id,
@@ -143,6 +162,8 @@ pub fn list_context_history(
                      wf.title || ' → ' || wt.title AS title,
                      wd.dependency_type AS detail,
                      wd.created_at AS created_at,
+                     NULL AS ended_at,
+                     NULL AS payload_json,
                      wd.from_work_item_id AS work_item_id,
                      wf.title AS work_item_title,
                      wf.primary_repository_id AS repository_id,
@@ -167,6 +188,8 @@ pub fn list_context_history(
                                ELSE '' END
                      ) AS detail,
                      wi.updated_at AS created_at,
+                     NULL AS ended_at,
+                     NULL AS payload_json,
                      wi.id AS work_item_id,
                      wi.title AS work_item_title,
                      wi.primary_repository_id AS repository_id,
@@ -184,6 +207,8 @@ pub fn list_context_history(
                      r.name AS title,
                      COALESCE(r.local_path, r.remote_url, '') AS detail,
                      r.updated_at AS created_at,
+                     NULL AS ended_at,
+                     NULL AS payload_json,
                      NULL AS work_item_id,
                      NULL AS work_item_title,
                      r.id AS repository_id,
@@ -207,6 +232,8 @@ pub fn list_context_history(
             title: get_string(&row, "title").unwrap_or_default(),
             detail: get_string(&row, "detail").unwrap_or_default(),
             created_at: get_string(&row, "created_at").unwrap_or_default(),
+            ended_at: get_optional_string(&row, "ended_at"),
+            payload_json: get_optional_string(&row, "payload_json"),
             work_item_id: get_optional_string(&row, "work_item_id"),
             work_item_title: get_optional_string(&row, "work_item_title"),
             repository_id: get_optional_string(&row, "repository_id"),

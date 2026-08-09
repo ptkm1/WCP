@@ -37,6 +37,7 @@ pub fn dismiss_work_item(db_path: &Path, work_item_id: &str) -> Result<WorkItemD
         &format!(
             "UPDATE work_items
              SET wcp_dismissed_at = '{}',
+                 wcp_inbox_at = NULL,
                  updated_at = '{}'
              WHERE id = '{}';",
             escape_sql(&now),

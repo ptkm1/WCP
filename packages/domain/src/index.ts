@@ -163,6 +163,7 @@ export interface WorkItem {
   externalKey?: string | null;
   externalUrl?: string | null;
   wcpDismissedAt?: string | null;
+  wcpInboxAt?: string | null;
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }

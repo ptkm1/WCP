@@ -1,11 +1,12 @@
 use crate::db::{
     ensure_db_ready, fetch_active_session, fetch_all_dependencies, fetch_artifacts_for_work_item,
-    fetch_notes_for_entity, fetch_persisted_today_plan, fetch_recent_sessions_by_work_item,
-    fetch_repository_by_id, fetch_task_dependencies, fetch_work_items, resolve_db_path,
+    fetch_inbox_work_items, fetch_notes_for_entity, fetch_organizations, fetch_persisted_today_plan,
+    fetch_projects, fetch_recent_sessions_by_work_item, fetch_repositories, fetch_repository_by_id,
+    fetch_task_dependencies, fetch_work_items, resolve_db_path,
 };
 use crate::domain::{
-    build_recoverable_context, build_today_focus, build_today_plan, build_today_summary,
-    resolve_focus_task, resolve_repository_id_for_focus,
+    build_continue_work, build_multi_focus_groups, build_recoverable_context, build_today_focus,
+    build_today_plan, build_today_summary, resolve_focus_task, resolve_repository_id_for_focus,
 };
 use crate::dto::DashboardDto;
 use crate::git::load_guardrail_for_repository;
@@ -64,16 +65,30 @@ pub fn load_dashboard_data() -> Result<DashboardDto, String> {
         .as_ref()
         .map(|task| build_recoverable_context(task, &backlog))
         .unwrap_or_default();
+    let continue_work = build_continue_work(
+        &db_path,
+        &backlog,
+        active_session.as_ref(),
+        current_task.as_ref(),
+    )?;
+    let organizations = fetch_organizations(&db_path)?;
+    let projects = fetch_projects(&db_path)?;
+    let repositories = fetch_repositories(&db_path)?;
+    let multi_focus_groups =
+        build_multi_focus_groups(&backlog, &organizations, &projects, &repositories);
     let guardrail = match repository_id.as_deref() {
         Some(id) => load_guardrail_for_repository(&db_path, id)?,
         None => None,
     };
+    let inbox = fetch_inbox_work_items(&db_path)?;
 
     Ok(DashboardDto {
         summary,
         today_focus,
         current_task,
         active_session,
+        continue_work,
+        multi_focus_groups,
         recent_task_sessions,
         task_notes,
         task_artifacts,
@@ -81,5 +96,6 @@ pub fn load_dashboard_data() -> Result<DashboardDto, String> {
         recoverable_context,
         guardrail,
         backlog,
+        inbox,
     })
 }

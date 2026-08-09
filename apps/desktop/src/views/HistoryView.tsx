@@ -7,6 +7,11 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { FieldSelect } from "@/components/ui/form-fields";
 import { HISTORY_KIND_ICONS } from "@/lib/app-icons";
+import {
+  formatSessionBranchLabel,
+  formatSessionTimeRange,
+  parseSessionGitActivity,
+} from "@/lib/session-git";
 import type { ReactNode } from "react";
 
 export type HistoryKindFilter = {
@@ -20,6 +25,8 @@ export type HistoryEventViewModel = {
   title: string;
   detail?: string | null;
   createdAt: string;
+  endedAt?: string | null;
+  payloadJson?: string | null;
   organizationId?: string | null;
   organizationName?: string | null;
 };
@@ -59,6 +66,7 @@ export type HistoryViewProps = {
   onEventClick: (event: HistoryEventViewModel) => void;
   formatEventKind: (kind: string) => string;
   formatDateTime: (value: string) => string;
+  formatTime: (value: string) => string;
   truncateDetail: (value: string) => string;
   formatEventMeta: (event: HistoryEventViewModel) => string;
   renderOrganizationAvatar: (
@@ -66,6 +74,71 @@ export type HistoryViewProps = {
     fallbackName?: string | null,
   ) => ReactNode;
 };
+
+function extractSessionNote(detail?: string | null): string | null {
+  const raw = detail?.trim();
+  if (!raw) {
+    return null;
+  }
+  const first = raw.split(" · ")[0]?.trim() ?? "";
+  if (!first) {
+    return null;
+  }
+  // Skip detail that is only a branch-like token.
+  if (first.includes("/") && first.length < 80 && !first.includes(" ")) {
+    return null;
+  }
+  return first;
+}
+
+function SessionHistoryDetail({
+  event,
+  formatTime,
+}: {
+  event: HistoryEventViewModel;
+  formatTime: (value: string) => string;
+}) {
+  const git = parseSessionGitActivity(event.payloadJson);
+  const branch = formatSessionBranchLabel(git);
+  const commits = git?.commits ?? [];
+  const note = extractSessionNote(event.detail);
+
+  return (
+    <div className="grid w-full gap-2 text-left">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <span>
+          {formatSessionTimeRange(event.createdAt, event.endedAt, formatTime)}
+        </span>
+        {event.organizationName ? (
+          <span>· {event.organizationName}</span>
+        ) : null}
+      </div>
+      {branch ? (
+        <p>
+          <span className="font-medium text-foreground">Branch</span>{" "}
+          <code>{branch}</code>
+        </p>
+      ) : null}
+      {commits.length > 0 ? (
+        <div className="grid gap-1">
+          <span className="font-medium text-foreground">Commits</span>
+          <ul className="grid gap-0.5">
+            {commits.slice(0, 8).map((commit) => (
+              <li key={`${commit.sha}-${commit.subject}`}>
+                <code>{commit.sha}</code> {commit.subject}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {note ? (
+        <p>
+          <span className="font-medium text-foreground">Nota</span> {note}
+        </p>
+      ) : null}
+    </div>
+  );
+}
 
 export function HistoryView({
   historyTextQuery,
@@ -96,6 +169,7 @@ export function HistoryView({
   onEventClick,
   formatEventKind,
   formatDateTime,
+  formatTime,
   truncateDetail,
   formatEventMeta,
   renderOrganizationAvatar,
@@ -209,32 +283,46 @@ export function HistoryView({
             <li key={group.dayKey} className="historyDayGroup">
               <h3 className="historyDayHeading">{group.label}</h3>
               <ul className="historyEventList">
-                {group.events.map((event) => (
-                  <li key={`${event.kind}-${event.id}`}>
-                    <HistoryEventButton
-                      kind={event.kind}
-                      onClick={() => onEventClick(event)}
-                      meta={`${formatEventKind(event.kind)} · ${formatDateTime(event.createdAt)}`}
-                      title={event.title}
-                      detail={
-                        event.detail ? truncateDetail(event.detail) : undefined
-                      }
-                      context={
-                        formatEventMeta(event) ? (
-                          <span className="historyEventContext">
-                            {event.organizationId
-                              ? renderOrganizationAvatar(
-                                  event.organizationId,
-                                  event.organizationName,
-                                )
-                              : null}
-                            <span>{formatEventMeta(event)}</span>
-                          </span>
-                        ) : undefined
-                      }
-                    />
-                  </li>
-                ))}
+                {group.events.map((event) => {
+                  const isSession = event.kind === "session";
+                  return (
+                    <li key={`${event.kind}-${event.id}`}>
+                      <HistoryEventButton
+                        kind={event.kind}
+                        onClick={() => onEventClick(event)}
+                        meta={
+                          isSession
+                            ? formatEventKind(event.kind)
+                            : `${formatEventKind(event.kind)} · ${formatDateTime(event.createdAt)}`
+                        }
+                        title={event.title}
+                        detail={
+                          isSession ? (
+                            <SessionHistoryDetail
+                              event={event}
+                              formatTime={formatTime}
+                            />
+                          ) : event.detail ? (
+                            truncateDetail(event.detail)
+                          ) : undefined
+                        }
+                        context={
+                          formatEventMeta(event) ? (
+                            <span className="historyEventContext">
+                              {event.organizationId
+                                ? renderOrganizationAvatar(
+                                    event.organizationId,
+                                    event.organizationName,
+                                  )
+                                : null}
+                              <span>{formatEventMeta(event)}</span>
+                            </span>
+                          ) : undefined
+                        }
+                      />
+                    </li>
+                  );
+                })}
               </ul>
             </li>
           ))}

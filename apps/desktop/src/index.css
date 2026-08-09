@@ -175,7 +175,8 @@
   }
 
   .app-main-content {
-    @apply w-full min-w-0 flex-1 overflow-x-clip px-4 py-5 lg:px-8 lg:py-6;
+    /* min-w-0 prevents flex overflow; avoid overflow-x-clip (forces y-clip in CSS). */
+    @apply w-full min-w-0 flex-1 px-4 py-5 lg:px-8 lg:py-6;
   }
 
   .view-header {

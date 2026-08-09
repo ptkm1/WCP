@@ -1,23 +1,32 @@
 use crate::db::{
-    commit_today_plan, dismiss_work_item as persist_dismiss_work_item, ensure_db_ready,
-    escape_sql, fetch_artifact_by_id, fetch_note_by_id, fetch_repository_by_id,
-    fetch_session_by_id, fetch_work_item_by_id, find_work_item_by_external_key, nullable_sql,
-    resolve_db_path, resolve_primary_workspace_id, restore_dismissed_work_item as persist_restore_dismissed_work_item,
-    sqlite_exec,
+    accept_inbox_work_item as persist_accept_inbox, commit_today_plan,
+    dismiss_work_item as persist_dismiss_work_item, ensure_db_ready, escape_sql,
+    fetch_all_dependencies, fetch_artifact_by_id, fetch_inbox_work_items, fetch_note_by_id,
+    fetch_repository_by_id, fetch_session_by_id, fetch_work_item_by_id, fetch_work_items,
+    find_work_item_by_external_key, nullable_sql, resolve_db_path, resolve_primary_workspace_id,
+    restore_dismissed_work_item as persist_restore_dismissed_work_item, sqlite_exec,
 };
 use crate::domain::{
-    create_work_item as persist_work_item, create_work_item_dependency as insert_dependency,
+    build_context_switch_origin, build_continue_work_for_organization, build_session_handoff_summary,
+    build_today_plan, create_work_item as persist_work_item,
+    create_work_item_dependency as insert_dependency,
     delete_work_item_dependency as remove_dependency, duplicate_work_item as persist_duplicate,
     load_task_context, update_work_item as persist_work_item_update,
 };
 use crate::dto::{
     ApplyWorkItemContextResultDto, AttachArtifactResultDto, CommitTodayPlanResultDto,
-    EndSessionResultDto, SaveNoteResultDto, SaveWorkItemResultDto, StartSessionResultDto,
+    ContextSwitchOriginDto, ContinueWorkDto, EndSessionResultDto, SaveNoteResultDto,
+    SaveWorkItemResultDto, SessionGitActivityDto, SessionHandoffSummaryDto, StartSessionResultDto,
     TaskContextDto,
 };
-use crate::git::{apply_repository_full_context, git_snapshot, load_guardrail_for_repository};
+use crate::git::{
+    apply_repository_full_context, git_snapshot, list_session_commits,
+    load_guardrail_for_repository, resolve_diverging_worktree_path,
+};
 use crate::integrations::extract_ticket_keys_from_branch;
-use crate::util::{iso_now, unix_timestamp_millis};
+use crate::util::{
+    compose_handoff_resume_summary, encode_session_links_json, iso_now, unix_timestamp_millis,
+};
 
 #[tauri::command]
 pub fn get_task_context(work_item_id: String) -> Result<TaskContextDto, String> {
@@ -91,6 +100,21 @@ pub fn update_work_item(
         resume_summary,
     )?;
 
+    Ok(SaveWorkItemResultDto { task })
+}
+
+#[tauri::command]
+pub fn list_inbox_work_items() -> Result<Vec<crate::dto::WorkItemDto>, String> {
+    let db_path = resolve_db_path()?;
+    ensure_db_ready(&db_path)?;
+    fetch_inbox_work_items(&db_path)
+}
+
+#[tauri::command]
+pub fn accept_inbox_work_item(work_item_id: String) -> Result<SaveWorkItemResultDto, String> {
+    let db_path = resolve_db_path()?;
+    ensure_db_ready(&db_path)?;
+    let task = persist_accept_inbox(&db_path, &work_item_id)?;
     Ok(SaveWorkItemResultDto { task })
 }
 
@@ -169,12 +193,47 @@ pub fn start_session(
         .map(|id| fetch_repository_by_id(&db_path, id))
         .transpose()?
         .flatten();
+    let work_item = work_item_id
+        .as_ref()
+        .map(|id| fetch_work_item_by_id(&db_path, id))
+        .transpose()?
+        .flatten();
 
-    let branch_name = repository
+    let snapshot = repository
         .as_ref()
         .and_then(|repo| repo.local_path.as_ref())
-        .and_then(|path| git_snapshot(path).ok())
-        .and_then(|snapshot| snapshot.branch_name);
+        .and_then(|path| git_snapshot(path).ok());
+    let branch_name = snapshot
+        .as_ref()
+        .and_then(|entry| entry.branch_name.clone());
+    let started_head = snapshot.as_ref().and_then(|entry| entry.head_sha.clone());
+    let worktree_path = repository
+        .as_ref()
+        .and_then(|repo| repo.local_path.as_deref())
+        .and_then(resolve_diverging_worktree_path);
+
+    let git_activity = SessionGitActivityDto {
+        started_branch: branch_name.clone(),
+        ended_branch: None,
+        started_head,
+        ended_head: None,
+        commits: Vec::new(),
+        worktree_path,
+    };
+    let links_json = encode_session_links_json(&git_activity)?;
+
+    let organization_id = work_item
+        .as_ref()
+        .and_then(|item| item.organization_id.clone())
+        .or_else(|| {
+            repository
+                .as_ref()
+                .and_then(|repo| repo.organization_id.clone())
+        });
+    let project_id = work_item
+        .as_ref()
+        .and_then(|item| item.project_id.clone())
+        .or_else(|| repository.as_ref().and_then(|repo| repo.project_id.clone()));
 
     let session_id = format!("session-{}", unix_timestamp_millis()?);
     let now = iso_now()?;
@@ -184,17 +243,21 @@ pub fn start_session(
         &db_path,
         &format!(
             "INSERT INTO session_logs (
-              id, workspace_id, work_item_id, repository_id, branch_name, started_at, goal, source_type, created_at, updated_at
+              id, workspace_id, work_item_id, organization_id, project_id, repository_id,
+              branch_name, started_at, goal, links_json, source_type, created_at, updated_at
             ) VALUES (
-              '{}', '{}', {}, {}, {}, '{}', {}, 'captured', '{}', '{}'
+              '{}', '{}', {}, {}, {}, {}, {}, '{}', {}, {}, 'captured', '{}', '{}'
             );",
             escape_sql(&session_id),
             escape_sql(&workspace_id),
             nullable_sql(work_item_id.as_deref()),
+            nullable_sql(organization_id.as_deref()),
+            nullable_sql(project_id.as_deref()),
             nullable_sql(repository_id.as_deref()),
             nullable_sql(branch_name.as_deref()),
             escape_sql(&now),
             nullable_sql(goal.as_deref()),
+            nullable_sql(Some(links_json.as_str())),
             escape_sql(&now),
             escape_sql(&now)
         ),
@@ -229,6 +292,41 @@ pub fn start_session(
 }
 
 #[tauri::command]
+pub fn get_session_handoff_summary(
+    session_id: String,
+) -> Result<SessionHandoffSummaryDto, String> {
+    let db_path = resolve_db_path()?;
+    ensure_db_ready(&db_path)?;
+    build_session_handoff_summary(&db_path, &session_id)
+}
+
+#[tauri::command]
+pub fn get_context_switch_origin(
+    session_id: Option<String>,
+    repository_id: Option<String>,
+    work_item_id: Option<String>,
+) -> Result<ContextSwitchOriginDto, String> {
+    let db_path = resolve_db_path()?;
+    ensure_db_ready(&db_path)?;
+    build_context_switch_origin(
+        &db_path,
+        session_id.as_deref(),
+        repository_id.as_deref(),
+        work_item_id.as_deref(),
+    )
+}
+
+#[tauri::command]
+pub fn get_organization_continue_work(
+    organization_id: String,
+) -> Result<Option<ContinueWorkDto>, String> {
+    let db_path = resolve_db_path()?;
+    ensure_db_ready(&db_path)?;
+    let backlog = fetch_work_items(&db_path)?;
+    build_continue_work_for_organization(&db_path, &backlog, &organization_id)
+}
+
+#[tauri::command]
 pub fn end_session(
     session_id: String,
     result: Option<String>,
@@ -237,6 +335,45 @@ pub fn end_session(
     let db_path = resolve_db_path()?;
     ensure_db_ready(&db_path)?;
     let now = iso_now()?;
+    let result_for_resume = result.clone();
+    let decisions_for_resume = decisions.clone();
+
+    let existing = fetch_session_by_id(&db_path, &session_id)?
+        .ok_or_else(|| "Sessao nao encontrada.".to_string())?;
+
+    let mut git_activity = existing
+        .git_activity
+        .clone()
+        .unwrap_or_else(|| SessionGitActivityDto {
+            started_branch: existing.branch_name.clone(),
+            ..SessionGitActivityDto::default()
+        });
+
+    if let Some(repository_id) = existing.repository_id.as_deref() {
+        if let Some(repository) = fetch_repository_by_id(&db_path, repository_id)? {
+            if let Some(local_path) = repository
+                .local_path
+                .as_deref()
+                .filter(|path| !path.trim().is_empty())
+            {
+                if let Ok(snapshot) = git_snapshot(local_path) {
+                    git_activity.ended_branch = snapshot.branch_name;
+                    git_activity.ended_head = snapshot.head_sha;
+                }
+                git_activity.commits = list_session_commits(
+                    local_path,
+                    &existing.started_at,
+                    git_activity.started_head.as_deref(),
+                    20,
+                );
+                if let Some(path) = resolve_diverging_worktree_path(local_path) {
+                    git_activity.worktree_path = Some(path);
+                }
+            }
+        }
+    }
+
+    let links_json = encode_session_links_json(&git_activity)?;
 
     sqlite_exec(
         &db_path,
@@ -245,11 +382,13 @@ pub fn end_session(
              SET ended_at = '{}',
                  result = {},
                  decisions = {},
+                 links_json = {},
                  updated_at = '{}'
              WHERE id = '{}';",
             escape_sql(&now),
             nullable_sql(result.as_deref()),
             nullable_sql(decisions.as_deref()),
+            nullable_sql(Some(links_json.as_str())),
             escape_sql(&now),
             escape_sql(&session_id)
         ),
@@ -257,6 +396,30 @@ pub fn end_session(
 
     let session = fetch_session_by_id(&db_path, &session_id)?
         .ok_or_else(|| "Nao foi possivel carregar a sessao encerrada".to_string())?;
+
+    if let Some(resume_summary) =
+        compose_handoff_resume_summary(result_for_resume.as_deref(), decisions_for_resume.as_deref())
+    {
+        if let Some(work_item_id) = session.work_item_id.as_deref() {
+            if let Some(task) = fetch_work_item_by_id(&db_path, work_item_id)? {
+                let workspace_id = resolve_primary_workspace_id(&db_path)?;
+                let _ = persist_work_item_update(
+                    &db_path,
+                    &workspace_id,
+                    work_item_id,
+                    task.title,
+                    task.description,
+                    Some(task.status),
+                    Some(task.priority),
+                    task.organization_id,
+                    task.project_id,
+                    task.primary_repository_id,
+                    task.blocked_reason,
+                    Some(resume_summary),
+                );
+            }
+        }
+    }
 
     Ok(EndSessionResultDto { session })
 }
@@ -313,7 +476,12 @@ pub fn attach_task_artifact(
     let artifact_id = format!("artifact-{}", unix_timestamp_millis()?);
     let now = iso_now()?;
     let workspace_id = resolve_primary_workspace_id(&db_path)?;
-    let trimmed_url = url.as_ref().map(|value| value.trim()).filter(|value| !value.is_empty());
+    let trimmed_url = url
+        .as_ref()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    let resolved_artifact_type = resolve_artifact_type(&artifact_type, trimmed_url.as_deref());
     let artifact_source_type = if trimmed_url.is_some() {
         "imported"
     } else {
@@ -331,9 +499,9 @@ pub fn attach_task_artifact(
             escape_sql(&artifact_id),
             escape_sql(&workspace_id),
             nullable_sql(repository_id.as_deref()),
-            escape_sql(&artifact_type),
+            escape_sql(&resolved_artifact_type),
             nullable_sql(title.as_deref()),
-            nullable_sql(url.as_deref()),
+            nullable_sql(trimmed_url.as_deref()),
             escape_sql(artifact_source_type),
             escape_sql(&now),
             escape_sql(&now)
@@ -404,11 +572,58 @@ pub fn apply_work_item_context(work_item_id: String) -> Result<ApplyWorkItemCont
 
 #[tauri::command]
 pub fn commit_today_plan_command(
-    work_item_ids: Vec<String>,
+    work_item_ids: Option<Vec<String>>,
 ) -> Result<CommitTodayPlanResultDto, String> {
     let db_path = resolve_db_path()?;
     ensure_db_ready(&db_path)?;
-    let today_plan = commit_today_plan(&db_path, &work_item_ids)?;
+
+    let resolved_ids = match work_item_ids {
+        Some(ids) if !ids.is_empty() => ids,
+        _ => {
+            let backlog = fetch_work_items(&db_path)?;
+            let dependencies = fetch_all_dependencies(&db_path)?;
+            build_today_plan(&backlog, &dependencies)
+                .into_iter()
+                .map(|item| item.work_item_id)
+                .collect()
+        }
+    };
+
+    if resolved_ids.is_empty() {
+        return Err(
+            "Nenhuma tarefa elegivel para montar o dia. Crie ou importe tarefas em todo/doing."
+                .to_string(),
+        );
+    }
+
+    let today_plan = commit_today_plan(&db_path, &resolved_ids)?;
 
     Ok(CommitTodayPlanResultDto { today_plan })
+}
+
+fn resolve_artifact_type(requested: &str, url: Option<&str>) -> String {
+    let trimmed = requested.trim();
+    if !trimmed.is_empty() && trimmed != "link" {
+        return trimmed.to_string();
+    }
+
+    let Some(url) = url.map(str::to_ascii_lowercase) else {
+        return if trimmed.is_empty() {
+            "link".to_string()
+        } else {
+            trimmed.to_string()
+        };
+    };
+
+    let is_pr = url.contains("/pull/")
+        || url.contains("/pulls/")
+        || url.contains("/-/merge_requests/")
+        || url.contains("/merge_requests/");
+    if is_pr {
+        "pr".to_string()
+    } else if trimmed.is_empty() {
+        "link".to_string()
+    } else {
+        trimmed.to_string()
+    }
 }

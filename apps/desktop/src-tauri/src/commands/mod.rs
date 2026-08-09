@@ -13,7 +13,8 @@ pub use dashboard::load_dashboard_data;
 pub use dialog::pick_local_folder;
 pub use git::{
     apply_repository_full_context, apply_repository_identity, fix_repository_remote_ssh_alias,
-    get_repository_hook_status, install_repository_pre_push_hook, remove_repository_pre_push_hook,
+    get_repository_branch, get_repository_hook_status, install_repository_pre_push_hook,
+    remove_repository_pre_push_hook,
 };
 pub use entities::{delete_organization, delete_project, delete_repository};
 pub use integrations::{
@@ -36,8 +37,10 @@ pub use repository::{
     update_repository_local_path,
 };
 pub use task::{
-    apply_work_item_context, attach_task_artifact, commit_today_plan_command, create_work_item,
-    create_work_item_dependency, delete_work_item_dependency, dismiss_work_item_command,
-    duplicate_work_item, end_session, get_task_context, restore_dismissed_work_item_command,
-    save_task_note, start_session, update_work_item,
+    accept_inbox_work_item, apply_work_item_context, attach_task_artifact, commit_today_plan_command,
+    create_work_item, create_work_item_dependency, delete_work_item_dependency,
+    dismiss_work_item_command, duplicate_work_item, end_session, get_context_switch_origin,
+    get_organization_continue_work, get_session_handoff_summary, get_task_context,
+    list_inbox_work_items, restore_dismissed_work_item_command, save_task_note, start_session,
+    update_work_item,
 };

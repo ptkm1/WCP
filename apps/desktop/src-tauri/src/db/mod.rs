@@ -191,10 +191,42 @@ pub fn sqlite_exec(db_path: &Path, sql: &str) -> Result<(), String> {
 pub fn fetch_work_items(db_path: &Path) -> Result<Vec<WorkItemDto>, String> {
     let rows = sqlite_json(
         db_path,
-        "SELECT id, title, description, status, priority, organization_id, project_id, primary_repository_id, blocked_reason, resume_summary, source_type, scheduled_for, external_provider, external_id, external_key, external_url, wcp_dismissed_at, updated_at FROM work_items ORDER BY priority ASC, updated_at DESC;",
+        "SELECT id, title, description, status, priority, organization_id, project_id, primary_repository_id, blocked_reason, resume_summary, source_type, scheduled_for, external_provider, external_id, external_key, external_url, wcp_dismissed_at, wcp_inbox_at, updated_at FROM work_items ORDER BY priority ASC, updated_at DESC;",
     )?;
 
     Ok(rows.iter().map(map_work_item_row).collect())
+}
+
+pub fn fetch_inbox_work_items(db_path: &Path) -> Result<Vec<WorkItemDto>, String> {
+    let rows = sqlite_json(
+        db_path,
+        "SELECT id, title, description, status, priority, organization_id, project_id, primary_repository_id, blocked_reason, resume_summary, source_type, scheduled_for, external_provider, external_id, external_key, external_url, wcp_dismissed_at, wcp_inbox_at, updated_at
+         FROM work_items
+         WHERE wcp_inbox_at IS NOT NULL
+           AND wcp_dismissed_at IS NULL
+           AND status != 'archived'
+         ORDER BY wcp_inbox_at DESC, updated_at DESC;",
+    )?;
+
+    Ok(rows.iter().map(map_work_item_row).collect())
+}
+
+pub fn accept_inbox_work_item(db_path: &Path, work_item_id: &str) -> Result<WorkItemDto, String> {
+    let now = crate::util::iso_now()?;
+    sqlite_exec(
+        db_path,
+        &format!(
+            "UPDATE work_items
+             SET wcp_inbox_at = NULL,
+                 updated_at = '{}'
+             WHERE id = '{}';",
+            escape_sql(&now),
+            escape_sql(work_item_id)
+        ),
+    )?;
+
+    fetch_work_item_by_id(db_path, work_item_id)?
+        .ok_or_else(|| "Nao foi possivel carregar a tarefa aceita.".to_string())
 }
 
 pub fn fetch_work_item_by_id(
@@ -204,7 +236,7 @@ pub fn fetch_work_item_by_id(
     let rows = sqlite_json(
         db_path,
         &format!(
-            "SELECT id, title, description, status, priority, organization_id, project_id, primary_repository_id, blocked_reason, resume_summary, source_type, scheduled_for, external_provider, external_id, external_key, external_url, wcp_dismissed_at, updated_at
+            "SELECT id, title, description, status, priority, organization_id, project_id, primary_repository_id, blocked_reason, resume_summary, source_type, scheduled_for, external_provider, external_id, external_key, external_url, wcp_dismissed_at, wcp_inbox_at, updated_at
              FROM work_items
              WHERE id = '{}'
              LIMIT 1;",
@@ -506,6 +538,7 @@ fn map_work_item_row(row: &Value) -> WorkItemDto {
         external_key: get_optional_string(row, "external_key"),
         external_url: get_optional_string(row, "external_url"),
         wcp_dismissed_at: get_optional_string(row, "wcp_dismissed_at"),
+        wcp_inbox_at: get_optional_string(row, "wcp_inbox_at"),
         updated_at: get_string(row, "updated_at").unwrap_or_default(),
     }
 }
@@ -597,6 +630,50 @@ pub fn fetch_recent_sessions_by_work_item(
     )?;
 
     Ok(rows.iter().map(map_session_row).collect())
+}
+
+pub fn fetch_latest_ended_session(db_path: &Path) -> Result<Option<SessionLogDto>, String> {
+    let rows = sqlite_json(
+        db_path,
+        &format!(
+            "{SESSION_SELECT}
+             FROM session_logs s
+             LEFT JOIN work_items wi ON wi.id = s.work_item_id
+             WHERE s.ended_at IS NOT NULL
+               AND s.work_item_id IS NOT NULL
+             ORDER BY s.ended_at DESC
+             LIMIT 1;"
+        ),
+    )?;
+
+    Ok(rows.first().map(map_session_row))
+}
+
+pub fn fetch_latest_ended_session_for_organization(
+    db_path: &Path,
+    organization_id: &str,
+) -> Result<Option<SessionLogDto>, String> {
+    let rows = sqlite_json(
+        db_path,
+        &format!(
+            "{SESSION_SELECT}
+             FROM session_logs s
+             LEFT JOIN work_items wi ON wi.id = s.work_item_id
+             LEFT JOIN repositories r ON r.id = s.repository_id
+             WHERE s.ended_at IS NOT NULL
+               AND s.work_item_id IS NOT NULL
+               AND (
+                 s.organization_id = '{org}'
+                 OR wi.organization_id = '{org}'
+                 OR r.organization_id = '{org}'
+               )
+             ORDER BY s.ended_at DESC
+             LIMIT 1;",
+            org = escape_sql(organization_id)
+        ),
+    )?;
+
+    Ok(rows.first().map(map_session_row))
 }
 
 pub fn fetch_notes_for_entity(
@@ -812,6 +889,7 @@ pub fn nullable_sql(value: Option<&str>) -> String {
 }
 
 fn map_session_row(row: &Value) -> SessionLogDto {
+    let links_json = get_optional_string(row, "links_json");
     SessionLogDto {
         id: get_string(row, "id").unwrap_or_default(),
         work_item_id: get_optional_string(row, "work_item_id"),
@@ -825,6 +903,7 @@ fn map_session_row(row: &Value) -> SessionLogDto {
         source_type: get_string(row, "source_type").unwrap_or_else(|| "captured".to_string()),
         work_item_external_key: get_optional_string(row, "work_item_external_key"),
         work_item_external_provider: get_optional_string(row, "work_item_external_provider"),
+        git_activity: crate::util::parse_session_git_activity(links_json.as_deref()),
     }
 }
 
@@ -874,7 +953,7 @@ pub use pm_mappings::{
 };
 pub use search::search_local_history;
 
-const SESSION_SELECT: &str = "SELECT s.id, s.work_item_id, s.repository_id, s.branch_name, s.started_at, s.ended_at, s.goal, s.decisions, s.result, s.source_type,
+const SESSION_SELECT: &str = "SELECT s.id, s.work_item_id, s.repository_id, s.branch_name, s.started_at, s.ended_at, s.goal, s.decisions, s.result, s.links_json, s.source_type,
        wi.external_key AS work_item_external_key, wi.external_provider AS work_item_external_provider";
 
 fn map_artifact_row(row: &Value) -> ArtifactDto {

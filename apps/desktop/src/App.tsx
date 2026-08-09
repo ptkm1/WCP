@@ -22,9 +22,30 @@ import { OrganizationCreateDialog } from "@/components/organizations/Organizatio
 import { PmProjectMappingDialog } from "@/components/organizations/PmProjectMappingDialog";
 import { AddRepositoryDialog } from "@/components/repos/AddRepositoryDialog";
 import { EditRepositoryPathDialog } from "@/components/repos/EditRepositoryPathDialog";
+import { RepoPicker } from "@/components/repos/RepoPicker";
+import { RepoPreflightCard } from "@/components/repos/RepoPreflightCard";
 import { RepositoryNoteDialog } from "@/components/repos/RepositoryNoteDialog";
 import { TaskDetailPanel } from "@/components/tasks/TaskDetailPanel";
 import { TaskListItem } from "@/components/tasks/TaskListItem";
+import {
+  ContextSwitchDialog,
+  type ContextSwitchOriginDto,
+} from "@/components/today/ContextSwitchDialog";
+import {
+  ContinueWorkCard,
+  type ContinueWorkDto,
+} from "@/components/today/ContinueWorkCard";
+import { ContinueWorkDialog } from "@/components/today/ContinueWorkDialog";
+import { InboxCard } from "@/components/today/InboxCard";
+import {
+  MultiFocusPromptDialog,
+  type MultiFocusGroupDto,
+  type MultiFocusTaskDraft,
+} from "@/components/today/MultiFocusPromptDialog";
+import {
+  SessionHandoffDialog,
+  type SessionHandoffSummaryDto,
+} from "@/components/today/SessionHandoffDialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -48,6 +69,11 @@ import { Label } from "@/components/ui/label";
 import { Popover } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ORG_TAB_ICONS } from "@/lib/app-icons";
+import {
+  buildMultiFocusGroupForTask,
+  firstUnsnoozedMultiFocusGroup,
+  snoozeMultiFocusGroup,
+} from "@/lib/multi-focus";
 import { BacklogView, OrganizationsView, ReposView, TodayView } from "@/views";
 import { HistoryView } from "@/views/HistoryView";
 import { invoke } from "@tauri-apps/api/core";
@@ -62,7 +88,6 @@ import {
 import {
   ArrowRightLeft,
   Building2,
-  FolderGit2,
   GitBranch,
   Image,
   Info,
@@ -100,6 +125,7 @@ interface WorkItemDto {
   externalKey?: string | null;
   externalUrl?: string | null;
   wcpDismissedAt?: string | null;
+  wcpInboxAt?: string | null;
   updatedAt?: string;
 }
 
@@ -367,6 +393,7 @@ interface PmSyncResultDto {
   updated: number;
   unchanged: number;
   removed: number;
+  inboxCreated: number;
   errors: string[];
 }
 
@@ -502,6 +529,8 @@ interface DashboardDto {
   todayFocus: TodayFocusDto;
   currentTask?: WorkItemDto | null;
   activeSession?: SessionLogDto | null;
+  continueWork?: ContinueWorkDto | null;
+  multiFocusGroups?: MultiFocusGroupDto[];
   recentTaskSessions: SessionLogDto[];
   taskNotes: KnowledgeNoteDto[];
   taskArtifacts: ArtifactDto[];
@@ -509,6 +538,13 @@ interface DashboardDto {
   recoverableContext: RecoverableContextCandidateDto[];
   guardrail?: RepositoryGuardrailDto | null;
   backlog: WorkItemDto[];
+  inbox?: WorkItemDto[];
+}
+
+interface RepositoryBranchDto {
+  repositoryId: string;
+  branchName?: string | null;
+  localPath?: string | null;
 }
 
 interface TaskContextDto {
@@ -611,6 +647,8 @@ interface ContextEventDto {
   title: string;
   detail: string;
   createdAt: string;
+  endedAt?: string | null;
+  payloadJson?: string | null;
   workItemId?: string | null;
   workItemTitle?: string | null;
   repositoryId?: string | null;
@@ -1044,6 +1082,42 @@ export function App() {
     taskId: string;
     text: string;
   } | null>(null);
+  const [continueWorkBusy, setContinueWorkBusy] = useState(false);
+  const [continueWorkDialogOpen, setContinueWorkDialogOpen] = useState(false);
+  const [continueWorkPanel, setContinueWorkPanel] = useState<{
+    continueWork: ContinueWorkDto;
+    currentBranch: string | null;
+    branchWarning: string | null;
+    validationChecks: ValidationCheckDto[];
+    notes: KnowledgeNoteDto[];
+    artifacts: ArtifactDto[];
+    message: string | null;
+  } | null>(null);
+  const [multiFocusDialogOpen, setMultiFocusDialogOpen] = useState(false);
+  const [multiFocusGroup, setMultiFocusGroup] =
+    useState<MultiFocusGroupDto | null>(null);
+  const [multiFocusBusy, setMultiFocusBusy] = useState(false);
+  const [handoffDialogOpen, setHandoffDialogOpen] = useState(false);
+  const [handoffSummary, setHandoffSummary] =
+    useState<SessionHandoffSummaryDto | null>(null);
+  const [handoffLoading, setHandoffLoading] = useState(false);
+  const handoffAfterEndRef = useRef<(() => void | Promise<void>) | null>(null);
+  const [contextSwitchOpen, setContextSwitchOpen] = useState(false);
+  const [contextSwitchStep, setContextSwitchStep] = useState<
+    "origin" | "destination"
+  >("origin");
+  const [contextSwitchOrigin, setContextSwitchOrigin] =
+    useState<ContextSwitchOriginDto | null>(null);
+  const [contextSwitchOriginLoading, setContextSwitchOriginLoading] =
+    useState(false);
+  const [contextSwitchDestinationOrgId, setContextSwitchDestinationOrgId] =
+    useState("");
+  const [contextSwitchDestination, setContextSwitchDestination] =
+    useState<ContinueWorkDto | null>(null);
+  const [contextSwitchDestinationLoading, setContextSwitchDestinationLoading] =
+    useState(false);
+  const [contextSwitchBusy, setContextSwitchBusy] = useState(false);
+  const [inboxBusyId, setInboxBusyId] = useState<string | null>(null);
   const [taskActionBusy, setTaskActionBusy] = useState(false);
   const [selectedOrganizationId, setSelectedOrganizationId] =
     useState<string>("all");
@@ -1053,9 +1127,18 @@ export function App() {
   const [selectedGuardrail, setSelectedGuardrail] =
     useState<RepositoryGuardrailDto | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [todayPlanBusy, setTodayPlanBusy] = useState(false);
+  const [todayPlanMessage, setTodayPlanMessage] = useState<string | null>(null);
+  const [todayPlanMessageTone, setTodayPlanMessageTone] = useState<
+    "success" | "warning"
+  >("success");
   const [repoError, setRepoError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [repoLoading, setRepoLoading] = useState(false);
+  const [selectedRepoBranch, setSelectedRepoBranch] = useState<string | null>(
+    null,
+  );
+  const [fixingPreflight, setFixingPreflight] = useState(false);
   const [repoMemory, setRepoMemory] = useState<RepositoryMemoryDto | null>(
     null,
   );
@@ -1069,8 +1152,6 @@ export function App() {
     null,
   );
   const [sessionGoal, setSessionGoal] = useState("");
-  const [sessionResult, setSessionResult] = useState("");
-  const [sessionDecisions, setSessionDecisions] = useState("");
   const [sessionBusy, setSessionBusy] = useState(false);
   const [contextBusy, setContextBusy] = useState(false);
   const [dependencyBusy, setDependencyBusy] = useState(false);
@@ -1521,6 +1602,26 @@ export function App() {
   }, [activeView]);
 
   useEffect(() => {
+    if (activeView !== "today") {
+      return;
+    }
+    if (multiFocusDialogOpen || continueWorkDialogOpen) {
+      return;
+    }
+    const group = firstUnsnoozedMultiFocusGroup(data?.multiFocusGroups);
+    if (!group) {
+      return;
+    }
+    setMultiFocusGroup(group);
+    setMultiFocusDialogOpen(true);
+  }, [
+    activeView,
+    continueWorkDialogOpen,
+    data?.multiFocusGroups,
+    multiFocusDialogOpen,
+  ]);
+
+  useEffect(() => {
     if (activeView !== "backlog" && activeView !== "today") {
       return;
     }
@@ -1682,6 +1783,7 @@ export function App() {
       setSelectedGuardrail(null);
       setHookStatus(null);
       setRepoMemory(null);
+      setSelectedRepoBranch(null);
       return;
     }
 
@@ -1689,11 +1791,12 @@ export function App() {
     setSelectedGuardrail(null);
     setHookStatus(null);
     setRepoMemory(null);
+    setSelectedRepoBranch(null);
     setRepoLoading(true);
 
     async function loadGuardrail() {
       try {
-        const [response, hook, memory] = await Promise.all([
+        const [response, hook, memory, branchInfo] = await Promise.all([
           invoke<RepositoryGuardrailDto | null>("get_repository_guardrail", {
             repositoryId: selectedRepoId,
           }),
@@ -1703,12 +1806,16 @@ export function App() {
           invoke<RepositoryMemoryDto>("get_repository_memory", {
             repositoryId: selectedRepoId,
           }),
+          invoke<RepositoryBranchDto>("get_repository_branch", {
+            repositoryId: selectedRepoId,
+          }).catch(() => null),
         ]);
 
         if (!cancelled) {
           setSelectedGuardrail(response);
           setHookStatus(hook);
           setRepoMemory(memory);
+          setSelectedRepoBranch(branchInfo?.branchName ?? null);
           setRepoError(null);
         }
       } catch (loadError) {
@@ -2248,6 +2355,8 @@ export function App() {
       items = items.filter((item) => !item.wcpDismissedAt);
     }
 
+    items = items.filter((item) => !item.wcpInboxAt);
+
     if (backlogStatusFilter === "blocked") {
       items = items.filter((item) => item.status === "blocked");
     } else if (backlogStatusFilter !== "all") {
@@ -2758,6 +2867,7 @@ export function App() {
       const haystack = [
         event.title,
         event.detail,
+        event.payloadJson,
         event.workItemTitle,
         event.repositoryName,
         event.organizationName,
@@ -2889,15 +2999,113 @@ export function App() {
     }
   }
 
-  function handleOrganizationChange(orgId: string) {
+  function applyOrganizationChange(orgId: string) {
     setSelectedOrganizationId(orgId);
     setContextStep(1);
     setSelectedRepoId(null);
     setSelectedGuardrail(null);
     setHookStatus(null);
     setRepoMemory(null);
+    setSelectedRepoBranch(null);
     setApplyResult(null);
     setHookResult(null);
+  }
+
+  function handleOrganizationChange(orgId: string) {
+    if (orgId === selectedOrganizationId) {
+      return;
+    }
+
+    if (orgId === "all" || organizations.length < 2) {
+      applyOrganizationChange(orgId);
+      return;
+    }
+
+    void openContextSwitch({ destinationOrgId: orgId });
+  }
+
+  function handleOrgSetupSelect(organizationId: string) {
+    if (organizationId === orgSetupSelectedId) {
+      return;
+    }
+
+    if (organizations.length >= 2) {
+      void openContextSwitch({ destinationOrgId: organizationId });
+      return;
+    }
+
+    setOrgSetupSelectedId(organizationId);
+    setOrgSetupError(null);
+    setOrgSetupSuccess(null);
+  }
+
+  async function handleFixPreflightContext() {
+    if (!selectedRepoId || !selectedRepo?.localPath) {
+      return;
+    }
+
+    try {
+      setFixingPreflight(true);
+      setRepoError(null);
+      setApplyResult(null);
+
+      const response = await invoke<ApplyFullContextResultDto>(
+        "apply_repository_full_context",
+        {
+          repositoryId: selectedRepoId,
+          sshHostAlias: selectedGuardrail?.expectedSshHostAlias ?? null,
+        },
+      );
+
+      const parts: string[] = [];
+      if (response.identityChanges.length > 0) {
+        parts.push(`Identidade: ${response.identityChanges.join(", ")}`);
+      }
+      if (response.remoteChanged) {
+        parts.push("Remoto SSH corrigido");
+      }
+      setApplyResult(
+        parts.length > 0
+          ? `Contexto corrigido · ${parts.join(" · ")}`
+          : "Contexto conferido — nenhuma alteracao necessaria.",
+      );
+
+      let hook = await invoke<RepositoryHookStatusDto>(
+        "get_repository_hook_status",
+        { repositoryId: selectedRepoId },
+      );
+      if (!hook.managedByApp) {
+        const installResponse = await invoke<InstallPrePushHookResultDto>(
+          "install_repository_pre_push_hook",
+          { repositoryId: selectedRepoId },
+        );
+        hook = {
+          repositoryId: installResponse.repositoryId,
+          hookPath: installResponse.hookPath,
+          installed: installResponse.installed,
+          managedByApp: true,
+        };
+        setHookResult(`Protecao instalada em ${installResponse.hookPath}`);
+      }
+      setHookStatus(hook);
+
+      await refreshRepositoryContext(false);
+      try {
+        const branchInfo = await invoke<RepositoryBranchDto>(
+          "get_repository_branch",
+          { repositoryId: selectedRepoId },
+        );
+        setSelectedRepoBranch(branchInfo.branchName ?? null);
+      } catch {
+        // branch opcional no preflight
+      }
+    } catch (fixError) {
+      setRepoError(
+        extractErrorMessage(fixError, "Falha ao corrigir contexto do repo"),
+      );
+    } finally {
+      setFixingPreflight(false);
+    }
   }
 
   function resetContextFlowForReposTab() {
@@ -3884,10 +4092,14 @@ export function App() {
         `${result.removed} removidas`,
         `${result.unchanged} sem mudanca`,
       ].join(" · ");
+      const inboxHint =
+        result.inboxCreated > 0
+          ? ` · ${result.inboxCreated} nova${result.inboxCreated === 1 ? "" : "s"} na Inbox`
+          : "";
       setIntegrationMessage(
         result.errors.length > 0
-          ? `${summary} · ${result.errors.join(" · ")}`
-          : `Sync concluido: ${summary}.`,
+          ? `${summary}${inboxHint} · ${result.errors.join(" · ")}`
+          : `Sync concluido: ${summary}${inboxHint}.`,
       );
       await reloadIntegrationConnections();
       await refreshDashboard();
@@ -3904,38 +4116,28 @@ export function App() {
   }
 
   async function handleCommitTodayPlan() {
-    const candidates = (data?.backlog ?? [])
-      .filter((item) => item.sourceType === "imported")
-      .filter((item) => item.status === "todo" || item.status === "doing")
-      .filter((item) => {
-        const kind = classifyWorkItemDeadlineFilter(item);
-        return (
-          kind === "overdue" || kind === "due_today" || kind === "due_soon"
-        );
-      })
-      .sort((left, right) => {
-        const leftDate = left.scheduledFor ?? "9999-12-31";
-        const rightDate = right.scheduledFor ?? "9999-12-31";
-        return leftDate.localeCompare(rightDate);
-      })
-      .slice(0, 3)
-      .map((item) => item.id);
-
-    if (candidates.length === 0) {
-      setError(
-        "Nenhuma tarefa importada com prazo encontrada para montar o dia.",
-      );
-      return;
-    }
-
     try {
-      await invoke("commit_today_plan_command", { workItemIds: candidates });
+      setTodayPlanBusy(true);
+      setTodayPlanMessage(null);
+      // Backend picks the same executable candidates as the suggested plan.
+      const result = await invoke<{ todayPlan: PlanItemDto[] }>(
+        "commit_today_plan_command",
+        { workItemIds: null },
+      );
       await refreshDashboard();
-      setError(null);
+      setTodayPlanMessageTone("success");
+      setTodayPlanMessage(
+        result.todayPlan.length === 1
+          ? "Plano do dia montado com 1 tarefa."
+          : `Plano do dia montado com ${result.todayPlan.length} tarefas.`,
+      );
     } catch (commitError) {
-      setError(
+      setTodayPlanMessageTone("warning");
+      setTodayPlanMessage(
         extractErrorMessage(commitError, "Falha ao montar plano do dia"),
       );
+    } finally {
+      setTodayPlanBusy(false);
     }
   }
 
@@ -3981,6 +4183,203 @@ export function App() {
     }
   }
 
+  async function handleResumeContinueWork(target?: ContinueWorkDto | null) {
+    const continueWork = target ?? data?.continueWork;
+    if (!continueWork || continueWorkBusy) {
+      return;
+    }
+
+    try {
+      setContinueWorkBusy(true);
+      setContinueWorkPanel(null);
+
+      if (continueWork.organizationId) {
+        setSelectedOrganizationId(continueWork.organizationId);
+        setOrgSetupSelectedId(continueWork.organizationId);
+      }
+
+      if (continueWork.repositoryId) {
+        setSelectedRepoId(continueWork.repositoryId);
+        setApplyResult(null);
+        setHookResult(null);
+      }
+
+      const applyResult = await invoke<ApplyWorkItemContextResultDto>(
+        "apply_work_item_context",
+        { workItemId: continueWork.workItemId },
+      );
+
+      let message: string | null = null;
+      let validationChecks: ValidationCheckDto[] =
+        applyResult.guardrail?.validation?.checks ??
+        applyResult.context?.validation?.checks ??
+        [];
+
+      if (applyResult.needsRepositoryLink) {
+        message =
+          "Vincule um repositorio a esta tarefa antes de aplicar o contexto.";
+      } else if (applyResult.context?.validation?.status === "ok") {
+        message = "Contexto completo aplicado com sucesso.";
+      } else if (applyResult.repositoryId) {
+        message = "Contexto aplicado. Revise os checks de validacao.";
+      }
+
+      if (applyResult.guardrail) {
+        setSelectedGuardrail(applyResult.guardrail);
+      }
+
+      const repositoryId =
+        applyResult.repositoryId ?? continueWork.repositoryId ?? null;
+      let currentBranch: string | null = null;
+      let branchWarning: string | null = null;
+
+      if (repositoryId) {
+        try {
+          const branchInfo = await invoke<RepositoryBranchDto>(
+            "get_repository_branch",
+            { repositoryId },
+          );
+          currentBranch = branchInfo.branchName ?? null;
+          if (!branchInfo.localPath?.trim()) {
+            branchWarning =
+              "Repositorio sem pasta local configurada. Cadastre a pasta para conferir a branch.";
+          } else if (
+            continueWork.branchName &&
+            currentBranch &&
+            continueWork.branchName !== currentBranch
+          ) {
+            branchWarning = `A sessao usava ${continueWork.branchName}, mas o repo esta em ${currentBranch}.`;
+          } else if (continueWork.branchName && !currentBranch) {
+            branchWarning =
+              "Nao foi possivel ler a branch atual do repositorio.";
+          }
+        } catch (branchError) {
+          branchWarning = extractErrorMessage(
+            branchError,
+            "Falha ao ler a branch atual do repositorio",
+          );
+        }
+      }
+
+      const taskContext = await invoke<TaskContextDto>("get_task_context", {
+        workItemId: continueWork.workItemId,
+      });
+
+      setContinueWorkPanel({
+        continueWork,
+        currentBranch,
+        branchWarning,
+        validationChecks,
+        notes: taskContext.taskNotes ?? [],
+        artifacts: taskContext.taskArtifacts ?? [],
+        message,
+      });
+      setContinueWorkDialogOpen(true);
+      await refreshDashboard();
+    } catch (resumeError) {
+      setContinueWorkPanel({
+        continueWork,
+        currentBranch: null,
+        branchWarning: null,
+        validationChecks: [],
+        notes: [],
+        artifacts: [],
+        message: extractErrorMessage(
+          resumeError,
+          "Falha ao retomar o contexto",
+        ),
+      });
+      setContinueWorkDialogOpen(true);
+    } finally {
+      setContinueWorkBusy(false);
+    }
+  }
+
+  function promptMultiFocusForTask(task: WorkItemDto, backlog: WorkItemDto[]) {
+    const organizationName =
+      organizations.find((org) => org.id === task.organizationId)?.name ?? null;
+    const projectName =
+      projects.find((project) => project.id === task.projectId)?.name ?? null;
+    const repositoryName =
+      repositories.find((repo) => repo.id === task.primaryRepositoryId)?.name ??
+      null;
+
+    const group = buildMultiFocusGroupForTask(backlog, task, {
+      organizationName,
+      projectName,
+      repositoryName,
+    });
+    if (!group) {
+      return;
+    }
+
+    setMultiFocusGroup(group);
+    setMultiFocusDialogOpen(true);
+  }
+
+  function handleMultiFocusSnooze() {
+    if (multiFocusGroup) {
+      snoozeMultiFocusGroup(multiFocusGroup.groupKey);
+    }
+    setMultiFocusDialogOpen(false);
+  }
+
+  async function handleMultiFocusSave(
+    drafts: Record<string, MultiFocusTaskDraft>,
+  ) {
+    if (!multiFocusGroup || multiFocusBusy) {
+      return;
+    }
+
+    try {
+      setMultiFocusBusy(true);
+      const todayLabel = new Date().toLocaleDateString("pt-BR");
+      const contextLabel = [
+        multiFocusGroup.organizationName,
+        multiFocusGroup.projectName ?? multiFocusGroup.repositoryName,
+      ]
+        .filter(Boolean)
+        .join(" · ");
+
+      for (const task of multiFocusGroup.tasks) {
+        const draft = drafts[task.id];
+        if (!draft) {
+          continue;
+        }
+        if (!draft.acting && !draft.note.trim()) {
+          continue;
+        }
+
+        const content = [
+          `Atuando agora: ${draft.acting ? "sim" : "nao"}`,
+          contextLabel ? `Contexto: ${contextLabel}` : null,
+          `Grupo: ${multiFocusGroup.groupKey}`,
+          `Data: ${todayLabel}`,
+          draft.note.trim() ? `Motivo: ${draft.note.trim()}` : null,
+        ]
+          .filter(Boolean)
+          .join("\n");
+
+        await invoke("save_task_note", {
+          workItemId: task.id,
+          title: "Motivo multi-foco",
+          content,
+          noteType: "multi_focus",
+        });
+      }
+
+      snoozeMultiFocusGroup(multiFocusGroup.groupKey);
+      setMultiFocusDialogOpen(false);
+      await refreshDashboard(selectedTaskId);
+    } catch (saveError) {
+      setError(
+        extractErrorMessage(saveError, "Falha ao salvar anotacoes multi-foco"),
+      );
+    } finally {
+      setMultiFocusBusy(false);
+    }
+  }
+
   async function handleStartFocusForTask(task: WorkItemDto) {
     try {
       setSessionBusy(true);
@@ -4010,6 +4409,10 @@ export function App() {
           block: "start",
         });
       }, 120);
+
+      const refreshed = await invoke<DashboardDto>("load_dashboard_data");
+      setData(refreshed);
+      promptMultiFocusForTask(task, refreshed.backlog);
     } catch (sessionError) {
       setError(extractErrorMessage(sessionError, "Falha ao iniciar foco"));
     } finally {
@@ -4296,8 +4699,6 @@ export function App() {
             }
           : current,
       );
-      setSessionResult("");
-      setSessionDecisions("");
       setError(null);
       await refreshHistoryIfNeeded();
     } catch (startError) {
@@ -4307,34 +4708,217 @@ export function App() {
     }
   }
 
-  async function handleEndSession() {
+  async function openSessionHandoff(options?: {
+    afterEnd?: () => void | Promise<void>;
+  }) {
     if (!data?.activeSession) {
       return;
     }
+
+    handoffAfterEndRef.current = options?.afterEnd ?? null;
+    setHandoffDialogOpen(true);
+    setHandoffLoading(true);
+    setHandoffSummary(null);
+
+    try {
+      const summary = await invoke<SessionHandoffSummaryDto>(
+        "get_session_handoff_summary",
+        { sessionId: data.activeSession.id },
+      );
+      setHandoffSummary(summary);
+      setError(null);
+    } catch (summaryError) {
+      setError(
+        extractErrorMessage(summaryError, "Falha ao montar resumo da sessao"),
+      );
+      setHandoffDialogOpen(false);
+      handoffAfterEndRef.current = null;
+    } finally {
+      setHandoffLoading(false);
+    }
+  }
+
+  async function loadContextSwitchDestination(organizationId: string) {
+    if (!organizationId.trim()) {
+      setContextSwitchDestination(null);
+      return;
+    }
+
+    try {
+      setContextSwitchDestinationLoading(true);
+      const destination = await invoke<ContinueWorkDto | null>(
+        "get_organization_continue_work",
+        { organizationId },
+      );
+      setContextSwitchDestination(destination);
+    } catch (destinationError) {
+      setContextSwitchDestination(null);
+      setError(
+        extractErrorMessage(
+          destinationError,
+          "Falha ao buscar trabalho da empresa destino",
+        ),
+      );
+    } finally {
+      setContextSwitchDestinationLoading(false);
+    }
+  }
+
+  async function openContextSwitch(options?: { destinationOrgId?: string }) {
+    const destinationCandidates = organizations.filter((org) => {
+      if (selectedOrganizationId !== "all") {
+        return org.id !== selectedOrganizationId;
+      }
+      return true;
+    });
+    const preferredDestination =
+      options?.destinationOrgId?.trim() ||
+      destinationCandidates[0]?.id ||
+      organizations.find((org) => org.id !== selectedOrganizationId)?.id ||
+      "";
+
+    setContextSwitchOpen(true);
+    setContextSwitchStep("origin");
+    setContextSwitchOrigin(null);
+    setContextSwitchDestination(null);
+    setContextSwitchDestinationOrgId(preferredDestination);
+    setContextSwitchOriginLoading(true);
+
+    try {
+      const origin = await invoke<ContextSwitchOriginDto>(
+        "get_context_switch_origin",
+        {
+          sessionId: data?.activeSession?.id ?? null,
+          repositoryId:
+            selectedRepoId ??
+            data?.guardrail?.repositoryId ??
+            data?.continueWork?.repositoryId ??
+            null,
+          workItemId:
+            selectedTaskId ??
+            data?.activeSession?.workItemId ??
+            data?.todayFocus.taskId ??
+            data?.continueWork?.workItemId ??
+            null,
+        },
+      );
+      setContextSwitchOrigin(origin);
+      setError(null);
+    } catch (originError) {
+      setError(
+        extractErrorMessage(originError, "Falha ao montar contexto de origem"),
+      );
+      setContextSwitchOpen(false);
+    } finally {
+      setContextSwitchOriginLoading(false);
+    }
+  }
+
+  async function handleContextSwitchRegister(payload: {
+    stoppedHere: string;
+    nextStep: string;
+  }) {
+    const destinationOrgId = contextSwitchDestinationOrgId.trim();
+    if (!destinationOrgId || contextSwitchBusy) {
+      return;
+    }
+
+    try {
+      setContextSwitchBusy(true);
+
+      if (data?.activeSession) {
+        await invoke<EndSessionResultDto>("end_session", {
+          sessionId: data.activeSession.id,
+          result: payload.stoppedHere || null,
+          decisions: payload.nextStep || null,
+        });
+
+        const resumeHint = [payload.stoppedHere, payload.nextStep]
+          .filter(Boolean)
+          .join(" · ");
+        if (selectedTaskId && resumeHint) {
+          offerResumeSuggestion(selectedTaskId, resumeHint);
+        }
+
+        setSessionGoal("");
+      }
+
+      applyOrganizationChange(destinationOrgId);
+      setOrgSetupSelectedId(destinationOrgId);
+      setOrgSetupError(null);
+      setOrgSetupSuccess(null);
+
+      setContextSwitchStep("destination");
+      await loadContextSwitchDestination(destinationOrgId);
+      await refreshDashboard(selectedTaskId);
+      await refreshHistoryIfNeeded();
+      setError(null);
+    } catch (switchError) {
+      setError(
+        extractErrorMessage(
+          switchError,
+          "Falha ao registrar e trocar contexto",
+        ),
+      );
+    } finally {
+      setContextSwitchBusy(false);
+    }
+  }
+
+  async function handleContextSwitchResume() {
+    const destination = contextSwitchDestination;
+    if (!destination || contextSwitchBusy || continueWorkBusy) {
+      return;
+    }
+
+    setContextSwitchOpen(false);
+    await handleResumeContinueWork(destination);
+  }
+
+  function handleContextSwitchDestinationOrgChange(organizationId: string) {
+    setContextSwitchDestinationOrgId(organizationId);
+    if (contextSwitchStep === "destination") {
+      void loadContextSwitchDestination(organizationId);
+    }
+  }
+
+  async function handleEndSession(payload?: {
+    stoppedHere?: string;
+    nextStep?: string;
+  }) {
+    if (!data?.activeSession) {
+      return;
+    }
+
+    const stoppedHere = payload?.stoppedHere?.trim() || "";
+    const nextStep = payload?.nextStep?.trim() || "";
 
     try {
       setSessionBusy(true);
       await invoke<EndSessionResultDto>("end_session", {
         sessionId: data.activeSession.id,
-        result: sessionResult || null,
-        decisions: sessionDecisions || null,
+        result: stoppedHere || null,
+        decisions: nextStep || null,
       });
 
-      setData({
-        ...data,
-        activeSession: null,
-      });
       setSessionGoal("");
-      setSessionResult("");
-      setSessionDecisions("");
+      setHandoffDialogOpen(false);
+      setHandoffSummary(null);
       setError(null);
-      if (selectedTaskId) {
-        offerResumeSuggestion(
-          selectedTaskId,
-          [sessionResult, sessionDecisions].filter(Boolean).join(" · "),
-        );
+
+      const resumeHint = [stoppedHere, nextStep].filter(Boolean).join(" · ");
+      if (selectedTaskId && resumeHint) {
+        offerResumeSuggestion(selectedTaskId, resumeHint);
       }
+
+      await refreshDashboard(selectedTaskId);
       await refreshHistoryIfNeeded();
+
+      const afterEnd = handoffAfterEndRef.current;
+      handoffAfterEndRef.current = null;
+      if (afterEnd) {
+        await afterEnd();
+      }
     } catch (endError) {
       setError(extractErrorMessage(endError, "Falha ao encerrar sessao"));
     } finally {
@@ -4347,8 +4931,6 @@ export function App() {
       session.repositoryId ?? data?.guardrail?.repositoryId ?? null,
     );
     setSessionGoal(session.goal ?? taskContext?.task?.title ?? "");
-    setSessionResult("");
-    setSessionDecisions(session.decisions ?? "");
   }
 
   function handleNextActionPrimary() {
@@ -4815,6 +5397,79 @@ export function App() {
     }
   }
 
+  async function handleAcceptInboxItem(workItemId: string) {
+    try {
+      setInboxBusyId(workItemId);
+      setError(null);
+      await invoke<{ task: WorkItemDto }>("accept_inbox_work_item", {
+        workItemId,
+      });
+      await refreshDashboard(workItemId);
+    } catch (acceptError) {
+      setError(
+        extractErrorMessage(acceptError, "Falha ao adicionar tarefa ao WCP"),
+      );
+    } finally {
+      setInboxBusyId(null);
+    }
+  }
+
+  async function handleDismissInboxItem(workItemId: string) {
+    try {
+      setInboxBusyId(workItemId);
+      setError(null);
+      await invoke<{ task: WorkItemDto }>("dismiss_work_item_command", {
+        workItemId,
+      });
+      await refreshDashboard(selectedTaskId);
+    } catch (dismissError) {
+      setError(
+        extractErrorMessage(dismissError, "Falha ao ignorar tarefa da Inbox"),
+      );
+    } finally {
+      setInboxBusyId(null);
+    }
+  }
+
+  async function handleAssociateInboxProject(
+    workItemId: string,
+    projectId: string,
+  ) {
+    const item =
+      data?.inbox?.find((entry) => entry.id === workItemId) ??
+      data?.backlog.find((entry) => entry.id === workItemId);
+    if (!item) {
+      return;
+    }
+
+    try {
+      setInboxBusyId(workItemId);
+      setError(null);
+      await invoke<{ task: WorkItemDto }>("update_work_item", {
+        workItemId,
+        title: item.title,
+        description: item.description ?? null,
+        status: item.status,
+        priority: item.priority ?? 3,
+        organizationId: item.organizationId ?? null,
+        projectId,
+        primaryRepositoryId: item.primaryRepositoryId ?? null,
+        blockedReason: item.blockedReason ?? null,
+        resumeSummary: item.resumeSummary ?? null,
+      });
+      await refreshDashboard(selectedTaskId);
+    } catch (associateError) {
+      setError(
+        extractErrorMessage(
+          associateError,
+          "Falha ao associar projeto na Inbox",
+        ),
+      );
+    } finally {
+      setInboxBusyId(null);
+    }
+  }
+
   async function handleRestoreDismissedTask() {
     if (!currentTask || !selectedTaskId || taskActionBusy) {
       return;
@@ -5054,6 +5709,7 @@ export function App() {
           <AppSidebar
             value={activeView}
             onChange={(view) => switchActiveView(view)}
+            todayBadgeCount={data?.inbox?.length ?? 0}
             organizationName={sidebarOrganization?.name}
             organizationKind={sidebarOrganization?.kind}
             organizationLogoUrl={
@@ -5104,7 +5760,31 @@ export function App() {
 
         {activeView === "today" ? (
           <TodayView>
-            <>
+            <div className="grid gap-4">
+              <InboxCard
+                items={data.inbox ?? []}
+                projects={projects}
+                busyId={inboxBusyId}
+                onAccept={(workItemId) =>
+                  void handleAcceptInboxItem(workItemId)
+                }
+                onDismiss={(workItemId) =>
+                  void handleDismissInboxItem(workItemId)
+                }
+                onAssociateProject={(workItemId, projectId) =>
+                  void handleAssociateInboxProject(workItemId, projectId)
+                }
+              />
+
+              {data.continueWork ? (
+                <ContinueWorkCard
+                  continueWork={data.continueWork}
+                  busy={continueWorkBusy}
+                  formatDateTime={formatDateTime}
+                  onResume={() => void handleResumeContinueWork()}
+                />
+              ) : null}
+
               <Card className="today-hero panel border-primary/20 bg-card/90">
                 <CardContent className="grid gap-5 p-6">
                   {todayDayBrief ? (
@@ -5199,6 +5879,19 @@ export function App() {
                       <Button type="button" onClick={handleNextActionPrimary}>
                         {getNextActionPrimaryLabel()}
                       </Button>
+                      {organizations.length >= 2 ? (
+                        <Button
+                          type="button"
+                          variant="default"
+                          onClick={() => void openContextSwitch()}
+                          disabled={
+                            contextSwitchBusy || contextSwitchOriginLoading
+                          }
+                        >
+                          <ArrowRightLeft className="h-4 w-4" aria-hidden />
+                          Trocar contexto
+                        </Button>
+                      ) : null}
                       {data.todayFocus.primaryRepositoryId ? (
                         <Button
                           type="button"
@@ -5249,9 +5942,10 @@ export function App() {
                     <Button
                       type="button"
                       variant="outline"
+                      disabled={todayPlanBusy}
                       onClick={() => void handleCommitTodayPlan()}
                     >
-                      Montar meu dia
+                      {todayPlanBusy ? "Montando..." : "Montar meu dia"}
                     </Button>
                     <Button
                       type="button"
@@ -5269,6 +5963,21 @@ export function App() {
                     </Button>
                   </div>
 
+                  {todayPlanMessage ? (
+                    <StatusAlert
+                      status={
+                        todayPlanMessageTone === "success" ? "ok" : "warning"
+                      }
+                      title={
+                        todayPlanMessageTone === "success"
+                          ? "Plano do dia"
+                          : "Nao foi possivel montar"
+                      }
+                    >
+                      {todayPlanMessage}
+                    </StatusAlert>
+                  ) : null}
+
                   <section
                     ref={sessionPanelRef}
                     className="sessionPanel border-t border-border pt-5"
@@ -5278,7 +5987,7 @@ export function App() {
                         <h2 className="text-lg font-semibold">Foco agora</h2>
                         <p className="muted">
                           {data.activeSession
-                            ? "Registre o resultado da sessao abaixo."
+                            ? "Encerre o bloco quando terminar — o contexto e montado automaticamente."
                             : "Registre o que pretende fazer neste bloco de trabalho."}
                         </p>
                       </div>
@@ -5311,29 +6020,15 @@ export function App() {
                       </div>
                     ) : (
                       <div className="sessionForm">
-                        <SessionFieldTextarea
-                          label="O que saiu disso?"
-                          value={sessionResult}
-                          onChange={(event) =>
-                            setSessionResult(event.target.value)
-                          }
-                          placeholder="Ex.: bug corrigido e testado localmente"
-                        />
-                        <SessionFieldTextarea
-                          label="Decisoes importantes"
-                          value={sessionDecisions}
-                          onChange={(event) =>
-                            setSessionDecisions(event.target.value)
-                          }
-                          placeholder="Ex.: manter a validacao no backend por enquanto"
-                        />
                         <div className="actionRow">
                           <Button
                             type="button"
-                            onClick={handleEndSession}
-                            disabled={sessionBusy}
+                            onClick={() => void openSessionHandoff()}
+                            disabled={sessionBusy || handoffLoading}
                           >
-                            {sessionBusy ? "Encerrando..." : "Encerrar foco"}
+                            {sessionBusy || handoffLoading
+                              ? "Abrindo..."
+                              : "Encerrar trabalho"}
                           </Button>
                         </div>
                       </div>
@@ -5342,7 +6037,7 @@ export function App() {
                 </CardContent>
               </Card>
 
-              <div className="today-grid mt-5 grid gap-5 lg:grid-cols-2">
+              <div className="today-grid grid gap-5 lg:grid-cols-2">
                 {data.todayPlan.length > 0 ? (
                   <section className="panel">
                     <div className="panelHeading">
@@ -5542,27 +6237,95 @@ export function App() {
                     </StatusAlert>
                   )}
                   <div className="quickLinks">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => {
-                        if (data.guardrail?.repositoryId) {
-                          openContextForRepository(
-                            data.guardrail.repositoryId,
-                            data.currentTask?.organizationId,
-                          );
-                        } else {
-                          setActiveView("repos");
+                    {organizations.length >= 2 ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => void openContextSwitch()}
+                        disabled={
+                          contextSwitchBusy || contextSwitchOriginLoading
                         }
-                      }}
-                    >
-                      <ArrowRightLeft className="h-4 w-4" aria-hidden />
-                      Abrir troca de contexto
-                    </Button>
+                      >
+                        <ArrowRightLeft className="h-4 w-4" aria-hidden />
+                        Trocar contexto
+                      </Button>
+                    ) : (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => {
+                          if (data.guardrail?.repositoryId) {
+                            openContextForRepository(
+                              data.guardrail.repositoryId,
+                              data.currentTask?.organizationId,
+                            );
+                          } else {
+                            setActiveView("repos");
+                          }
+                        }}
+                      >
+                        <ArrowRightLeft className="h-4 w-4" aria-hidden />
+                        Abrir Projetos
+                      </Button>
+                    )}
                   </div>
                 </section>
               </div>
-            </>
+            </div>
+
+            <ContinueWorkDialog
+              open={continueWorkDialogOpen}
+              onOpenChange={setContinueWorkDialogOpen}
+              continueWork={continueWorkPanel?.continueWork ?? null}
+              currentBranch={continueWorkPanel?.currentBranch}
+              branchWarning={continueWorkPanel?.branchWarning}
+              validationChecks={continueWorkPanel?.validationChecks ?? []}
+              notes={continueWorkPanel?.notes ?? []}
+              artifacts={continueWorkPanel?.artifacts ?? []}
+              message={continueWorkPanel?.message}
+              busy={continueWorkBusy}
+              canStartFocus={
+                Boolean(continueWorkPanel?.continueWork) &&
+                !data.activeSession &&
+                !continueWorkPanel?.continueWork.sessionActive
+              }
+              formatDateTime={formatDateTime}
+              formatCheckDetail={formatValidationCheckDetail}
+              onOpenTask={() => {
+                const taskId = continueWorkPanel?.continueWork.workItemId;
+                if (!taskId) {
+                  return;
+                }
+                setContinueWorkDialogOpen(false);
+                selectTaskId(taskId);
+              }}
+              onStartFocus={() => {
+                const taskId = continueWorkPanel?.continueWork.workItemId;
+                const task =
+                  data.backlog.find((item) => item.id === taskId) ??
+                  (data.currentTask?.id === taskId ? data.currentTask : null);
+                if (!task) {
+                  return;
+                }
+                setContinueWorkDialogOpen(false);
+                void handleStartFocusForTask(task);
+              }}
+            />
+
+            <MultiFocusPromptDialog
+              open={multiFocusDialogOpen}
+              onOpenChange={(open) => {
+                if (!open) {
+                  handleMultiFocusSnooze();
+                  return;
+                }
+                setMultiFocusDialogOpen(true);
+              }}
+              group={multiFocusGroup}
+              busy={multiFocusBusy}
+              onSnooze={handleMultiFocusSnooze}
+              onSave={(drafts) => void handleMultiFocusSave(drafts)}
+            />
           </TodayView>
         ) : null}
 
@@ -5910,9 +6673,7 @@ export function App() {
                         key={organization.id}
                         active={orgSetupSelectedId === organization.id}
                         onClick={() => {
-                          setOrgSetupSelectedId(organization.id);
-                          setOrgSetupError(null);
-                          setOrgSetupSuccess(null);
+                          handleOrgSetupSelect(organization.id);
                         }}
                         leading={
                           <OrganizationAvatar
@@ -6213,7 +6974,7 @@ export function App() {
                                         openGitContextForRepo(repository)
                                       }
                                     >
-                                      Ir para troca de contexto
+                                      Preparar contexto Git
                                     </Button>
                                     <Button
                                       type="button"
@@ -7449,6 +8210,23 @@ export function App() {
                 {CONTEXT_STEP_HINTS[contextStep]}
               </p>
 
+              {selectedRepo && contextStep >= 2 ? (
+                <RepoPreflightCard
+                  repositoryName={selectedRepo.name}
+                  organizationName={
+                    selectedOrganization?.name ??
+                    selectedRepo.organizationName ??
+                    null
+                  }
+                  guardrail={selectedGuardrail}
+                  hookStatus={hookStatus}
+                  currentBranch={selectedRepoBranch}
+                  loading={repoLoading}
+                  fixing={fixingPreflight}
+                  onFix={() => void handleFixPreflightContext()}
+                />
+              ) : null}
+
               {contextChainLabel && contextStep >= 1 && contextStep <= 3 ? (
                 <div className="contextChainCard">
                   <SectionTitle icon={GitBranch}>
@@ -7589,52 +8367,31 @@ export function App() {
                 </div>
               ) : (
                 <div className="reposWizardLayout">
-                  <aside className="reposWizardSidebar">
-                    <div className="repoList grid gap-3">
-                      <SectionTitle icon={FolderGit2}>
-                        Repositorios por empresa
-                      </SectionTitle>
-                      <ScrollArea className="h-[min(56vh,560px)] pr-2">
-                        {groupedRepositories.map((group) => (
-                          <div
-                            key={group.organizationName}
-                            className="repoGroup"
-                          >
-                            <p className="repoGroupTitle">
-                              <OrganizationAvatar
-                                name={group.organizationName}
-                                kind={
-                                  findOrganizationById(group.organizationId)
-                                    ?.kind
-                                }
-                                logoUrl={getOrganizationLogoUrl(
-                                  group.organizationId,
-                                )}
-                                size="sm"
-                              />
-                              <span>{group.organizationName}</span>
-                            </p>
-                            {group.repositories.map((repository) => (
-                              <SelectableListItem
-                                key={repository.id}
-                                active={selectedRepoId === repository.id}
-                                onClick={() =>
-                                  handleSelectRepository(repository)
-                                }
-                                title={repository.name}
-                                subtitle={formatRepositoryContextLine(
-                                  repository,
-                                )}
-                              >
-                                {repository.providerHost ??
-                                  "Servico nao informado"}
-                              </SelectableListItem>
-                            ))}
-                          </div>
-                        ))}
-                      </ScrollArea>
-                    </div>
-                  </aside>
+                  <RepoPicker
+                    groups={groupedRepositories.map((group) => {
+                      const organization = findOrganizationById(
+                        group.organizationId,
+                      );
+                      return {
+                        organizationId: group.organizationId,
+                        organizationName: group.organizationName,
+                        organizationKind: organization?.kind,
+                        organizationLogoUrl: getOrganizationLogoUrl(
+                          group.organizationId,
+                        ),
+                        repositories: group.repositories,
+                      };
+                    })}
+                    selectedRepoId={selectedRepoId}
+                    onSelect={(repositoryId) => {
+                      const repository = repositories.find(
+                        (item) => item.id === repositoryId,
+                      );
+                      if (repository) {
+                        handleSelectRepository(repository);
+                      }
+                    }}
+                  />
 
                   <div className="contextStepContent reposWizardMain">
                     {!selectedRepo ? (
@@ -8223,7 +8980,9 @@ export function App() {
                                 <li key={note.id}>
                                   <div>
                                     <strong>{note.title}</strong>
-                                    <span>{note.noteType}</span>
+                                    <span>
+                                      {formatNoteTypeLabel(note.noteType)}
+                                    </span>
                                     <code>{note.content}</code>
                                   </div>
                                 </li>
@@ -8284,6 +9043,7 @@ export function App() {
               normalizeContextEventLabel(kind as ContextEventKind)
             }
             formatDateTime={formatDateTime}
+            formatTime={formatClockTime}
             truncateDetail={truncateSearchDetail}
             formatEventMeta={(event) =>
               formatHistoryEventMeta(event as ContextEventDto)
@@ -8455,6 +9215,74 @@ export function App() {
         onSubmit={handleSaveRepositoryNote}
       />
 
+      <SessionHandoffDialog
+        open={handoffDialogOpen}
+        onOpenChange={(open) => {
+          if (!open) {
+            handoffAfterEndRef.current = null;
+          }
+          setHandoffDialogOpen(open);
+        }}
+        summary={handoffSummary}
+        loading={handoffLoading}
+        busy={sessionBusy}
+        onSaveAndEnd={(payload) =>
+          void handleEndSession({
+            stoppedHere: payload.stoppedHere,
+            nextStep: payload.nextStep,
+          })
+        }
+        onEndWithoutNote={() => void handleEndSession()}
+      />
+
+      <ContextSwitchDialog
+        open={contextSwitchOpen}
+        onOpenChange={(open) => {
+          if (!open && (contextSwitchBusy || contextSwitchOriginLoading)) {
+            return;
+          }
+          setContextSwitchOpen(open);
+          if (!open) {
+            setContextSwitchStep("origin");
+            setContextSwitchOrigin(null);
+            setContextSwitchDestination(null);
+          }
+        }}
+        step={contextSwitchStep}
+        origin={contextSwitchOrigin}
+        originLoading={contextSwitchOriginLoading}
+        destinationOrgId={contextSwitchDestinationOrgId}
+        onDestinationOrgChange={handleContextSwitchDestinationOrgChange}
+        organizations={organizations
+          .filter((org) => {
+            if (
+              contextSwitchStep === "origin" &&
+              contextSwitchOrigin?.organizationId
+            ) {
+              return org.id !== contextSwitchOrigin.organizationId;
+            }
+            if (
+              contextSwitchStep === "origin" &&
+              selectedOrganizationId !== "all"
+            ) {
+              return org.id !== selectedOrganizationId;
+            }
+            return true;
+          })
+          .map((org) => ({ id: org.id, name: org.name }))}
+        destination={contextSwitchDestination}
+        destinationLoading={contextSwitchDestinationLoading}
+        busy={contextSwitchBusy || continueWorkBusy}
+        onRegisterAndSwitch={(payload) =>
+          void handleContextSwitchRegister(payload)
+        }
+        onResume={() => void handleContextSwitchResume()}
+        onOpenProjects={() => {
+          setContextSwitchOpen(false);
+          setActiveView("repos");
+        }}
+      />
+
       <ConfirmDialog
         open={confirmDialog !== null}
         title={confirmDialog?.title ?? ""}
@@ -8475,6 +9303,11 @@ const DATE_TIME_FORMATTER = new Intl.DateTimeFormat("pt-BR", {
   day: "2-digit",
   month: "long",
   year: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+});
+
+const CLOCK_TIME_FORMATTER = new Intl.DateTimeFormat("pt-BR", {
   hour: "2-digit",
   minute: "2-digit",
 });
@@ -8656,25 +9489,6 @@ function formatValidationCheckDetail(check: ValidationCheckDto): string {
     return `${check.message} · Atual: ${check.actual}`;
   }
   return check.message;
-}
-
-function formatRepositoryContextLine(
-  repository: RepositoryListItemDto,
-): string | undefined {
-  const identity =
-    repository.expectedGitUserName && repository.expectedGitUserEmail
-      ? `${repository.expectedGitUserName} <${repository.expectedGitUserEmail}>`
-      : (repository.expectedGitUserName ??
-        repository.expectedGitUserEmail ??
-        undefined);
-
-  const parts = [
-    repository.organizationName,
-    repository.environmentName,
-    identity ? `git: ${identity}` : undefined,
-  ].filter(Boolean);
-
-  return parts.length > 0 ? parts.join(" · ") : undefined;
 }
 
 function formatContextChain(
@@ -9204,10 +10018,11 @@ function buildTaskTimelineEntries(
 
   for (const note of taskContext?.taskNotes ?? []) {
     const isChangeNote = note.title === "Alteracao da tarefa";
+    const isMultiFocus = note.noteType === "multi_focus";
     entries.push({
       id: `note-${note.id}`,
       kind: isChangeNote ? "change" : "note",
-      title: note.title,
+      title: isMultiFocus ? "Multi-foco" : note.title,
       detail: note.content,
       createdAt: note.createdAt,
     });
@@ -9301,6 +10116,8 @@ function searchResultToContextEvent(
     title: result.title,
     detail: result.detail,
     createdAt: result.createdAt ?? new Date(0).toISOString(),
+    endedAt: null,
+    payloadJson: null,
     workItemId: result.workItemId ?? task?.id ?? null,
     workItemTitle: task?.title ?? null,
     repositoryId: result.repositoryId ?? repository?.id ?? null,
@@ -9455,6 +10272,19 @@ function serializeUsefulLinks(
   });
 }
 
+function formatNoteTypeLabel(noteType: string | null | undefined): string {
+  switch (noteType) {
+    case "multi_focus":
+      return "Multi-foco";
+    case "decision":
+      return "Decisao";
+    case "pattern":
+      return "Padrao";
+    default:
+      return noteType?.trim() || "Nota";
+  }
+}
+
 function formatDateTime(value: string | null | undefined): string {
   if (!value) {
     return "-";
@@ -9466,6 +10296,19 @@ function formatDateTime(value: string | null | undefined): string {
   }
 
   return DATE_TIME_FORMATTER.format(parsed);
+}
+
+function formatClockTime(value: string | null | undefined): string {
+  if (!value) {
+    return "-";
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+
+  return CLOCK_TIME_FORMATTER.format(parsed);
 }
 
 function formatTimelineWhen(createdAt: string): string {

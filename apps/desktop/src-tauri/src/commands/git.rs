@@ -1,11 +1,12 @@
 use crate::db::{ensure_db_ready, fetch_repository_by_id, resolve_db_path};
 use crate::dto::{
     ApplyFullContextResultDto, ApplyIdentityResultDto, FixRepositoryRemoteResultDto,
-    InstallPrePushHookResultDto, RemovePrePushHookResultDto, RepositoryHookStatusDto,
+    InstallPrePushHookResultDto, RemovePrePushHookResultDto, RepositoryBranchDto,
+    RepositoryHookStatusDto,
 };
 use crate::git::{
     apply_repository_full_context as apply_full_context_to_repo,
-    apply_repository_identity_changes, apply_repository_remote_ssh_alias,
+    apply_repository_identity_changes, apply_repository_remote_ssh_alias, git_snapshot,
     load_guardrail_for_repository,
 };
 use crate::hooks::{
@@ -107,6 +108,28 @@ pub fn remove_repository_pre_push_hook(
     Ok(RemovePrePushHookResultDto {
         repository_id,
         removed: true,
+    })
+}
+
+#[tauri::command]
+pub fn get_repository_branch(repository_id: String) -> Result<RepositoryBranchDto, String> {
+    let db_path = resolve_db_path()?;
+    ensure_db_ready(&db_path)?;
+    let repository = fetch_repository_by_id(&db_path, &repository_id)?
+        .ok_or_else(|| "Repositorio nao encontrado".to_string())?;
+
+    let local_path = repository.local_path.clone();
+    let branch_name = match local_path.as_deref() {
+        Some(path) if !path.trim().is_empty() => git_snapshot(path)
+            .ok()
+            .and_then(|snapshot| snapshot.branch_name),
+        _ => None,
+    };
+
+    Ok(RepositoryBranchDto {
+        repository_id,
+        branch_name,
+        local_path,
     })
 }
 

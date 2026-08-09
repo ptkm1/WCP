@@ -36,10 +36,16 @@ export function Popover({
     }
 
     function handlePointerDown(event: MouseEvent) {
-      const target = event.target as Node;
+      const target = event.target as HTMLElement | null;
+      if (!target) {
+        onOpenChange(false);
+        return;
+      }
+      // Select/menus portaled to body sit outside contentRef; keep the popover open.
       if (
         rootRef.current?.contains(target) ||
-        contentRef.current?.contains(target)
+        contentRef.current?.contains(target) ||
+        target.closest("[data-floating-menu]")
       ) {
         return;
       }
@@ -47,9 +53,14 @@ export function Popover({
     }
 
     function handleEscape(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        onOpenChange(false);
+      if (event.key !== "Escape") {
+        return;
       }
+      // Nested portaled select/menu consumes the first Escape.
+      if (document.querySelector('[data-floating-menu][data-state="open"]')) {
+        return;
+      }
+      onOpenChange(false);
     }
 
     document.addEventListener("mousedown", handlePointerDown);

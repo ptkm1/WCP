@@ -45,7 +45,7 @@ pnpm install
 pnpm setup:desktop
 ```
 
-Isso cria ou atualiza o banco local em `packages/db/local.db` com schema e seed.
+Isso cria ou atualiza o schema do banco local em `packages/db/local.db` (sem seed).
 
 ### Subir o app desktop
 
@@ -64,15 +64,16 @@ pnpm dev:desktop:tauri
 
 Observacao:
 
-- o shell Tauri agora faz bootstrap automatico do banco local quando `packages/db/local.db` nao existe ou ainda nao possui o schema inicial
-- migration e seed ficam embutidos no binario desktop em desenvolvimento, evitando erro de path relativo ao abrir o dashboard
+- o shell Tauri faz bootstrap automatico do banco local quando `packages/db/local.db` nao existe ou ainda nao possui o schema inicial
+- `start:desktop` / `setup:desktop` so aplicam migrations; nao reinserem seed em banco ja existente
+- para popular dados de exemplo (opcional): `pnpm db:seed` ou `pnpm setup:desktop:seed`
 
 ### Comandos uteis
 
 - `pnpm dev:desktop`: sobe apenas o frontend React/Vite do desktop
 - `pnpm dev:desktop:tauri`: sobe o shell nativo do Tauri
 - `pnpm db:migrate`: aplica migrations no banco local
-- `pnpm db:seed`: popula o banco local
+- `pnpm db:seed`: popula o banco local com dados de exemplo
 - `pnpm typecheck`: valida o monorepo TypeScript
 
 ### Reset do banco local
@@ -82,4 +83,11 @@ Se quiser resetar o banco de desenvolvimento:
 ```bash
 rm packages/db/local.db
 pnpm setup:desktop
+```
+
+Para recriar ja com seed de exemplo:
+
+```bash
+rm packages/db/local.db
+pnpm setup:desktop:seed
 ```

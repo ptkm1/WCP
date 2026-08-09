@@ -167,6 +167,7 @@ export const workItems = sqliteTable("work_items", {
   externalKey: text("external_key"),
   externalUrl: text("external_url"),
   wcpDismissedAt: text("wcp_dismissed_at"),
+  wcpInboxAt: text("wcp_inbox_at"),
   ...timestamps,
 });
 

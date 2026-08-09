@@ -64,6 +64,7 @@ interface TaskNote {
   id: string;
   title: string;
   content: string;
+  noteType?: string;
   sourceType?: string;
   createdAt: string;
 }
@@ -635,8 +636,14 @@ export function TaskDetailPanel({
                     {taskNotes.map((note) => (
                       <li key={note.id}>
                         <div>
-                          <strong>{note.title}</strong>
-                          {note.sourceType ? (
+                          <strong>
+                            {note.noteType === "multi_focus"
+                              ? "Multi-foco"
+                              : note.title}
+                          </strong>
+                          {note.noteType === "multi_focus" ? (
+                            <Badge variant="outline">Multi-foco</Badge>
+                          ) : note.sourceType ? (
                             <Badge variant="outline">
                               {formatSourceTypeLabel(note.sourceType)}
                             </Badge>

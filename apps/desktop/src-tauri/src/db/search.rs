@@ -47,6 +47,7 @@ pub fn search_local_history(db_path: &Path, query: &str) -> Result<Vec<SearchRes
                  OR lower(COALESCE(s.result, '')) LIKE '{pattern}' ESCAPE '\\'
                  OR lower(COALESCE(s.decisions, '')) LIKE '{pattern}' ESCAPE '\\'
                  OR lower(COALESCE(s.branch_name, '')) LIKE '{pattern}' ESCAPE '\\'
+                 OR lower(COALESCE(s.links_json, '')) LIKE '{pattern}' ESCAPE '\\'
 
               UNION ALL
 

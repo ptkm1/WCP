@@ -1,15 +1,22 @@
 use crate::db::{
-    dependency_exists, escape_sql, fetch_artifacts_for_work_item, fetch_notes_for_entity,
-    fetch_recent_sessions_by_work_item, fetch_task_dependencies, fetch_work_item_by_id,
-    fetch_work_items, insert_work_item, sqlite_exec, update_work_item as save_work_item_row,
-    work_item_exists,
+    dependency_exists, escape_sql, fetch_artifacts_for_work_item, fetch_latest_ended_session,
+    fetch_latest_ended_session_for_organization, fetch_notes_for_entity, fetch_organization_by_id,
+    fetch_project_by_id, fetch_recent_sessions_by_work_item, fetch_repository_by_id,
+    fetch_session_by_id, fetch_task_dependencies, fetch_work_item_by_id, fetch_work_items,
+    insert_work_item, sqlite_exec, update_work_item as save_work_item_row, work_item_exists,
 };
 use crate::dto::{
-    PlanItemDto, RecoverableContextCandidateDto, SessionLogDto, TaskContextDto, TodayFocusDto,
-    TodaySummary, WorkItemDto,
+    ContextSwitchOriginDto, ContinueWorkDto, MultiFocusGroupDto, MultiFocusTaskDto,
+    OrganizationListItemDto, PlanItemDto, ProjectListItemDto, RecoverableContextCandidateDto,
+    RepositoryListItemDto, SessionHandoffArtifactDto, SessionHandoffSummaryDto, SessionLogDto,
+    TaskContextDto, TodayFocusDto, TodaySummary, WorkItemDto,
 };
-use crate::util::{iso_now, unix_timestamp_millis};
-use std::collections::HashSet;
+use crate::git::{list_session_commits, working_tree_status};
+use crate::util::{
+    compose_handoff_resume_summary, format_session_duration_label, iso_now, is_iso_date_yesterday,
+    unix_timestamp_millis,
+};
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 mod context;
@@ -477,7 +484,9 @@ enum DeadlineKind {
 }
 
 fn is_planning_visible(item: &WorkItemDto) -> bool {
-    item.wcp_dismissed_at.is_none() && item.status != "archived"
+    item.wcp_dismissed_at.is_none()
+        && item.wcp_inbox_at.is_none()
+        && item.status != "archived"
 }
 
 fn classify_deadline_kind(item: &WorkItemDto) -> DeadlineKind {
@@ -782,6 +791,551 @@ fn truncate_text(value: &str, max_chars: usize) -> String {
 
     let shortened: String = trimmed.chars().take(max_chars).collect();
     format!("{shortened}...")
+}
+
+pub fn build_continue_work(
+    db_path: &Path,
+    backlog: &[WorkItemDto],
+    active_session: Option<&SessionLogDto>,
+    focus_task: Option<&WorkItemDto>,
+) -> Result<Option<ContinueWorkDto>, String> {
+    let mut task: Option<WorkItemDto> = None;
+    let mut session: Option<SessionLogDto> = None;
+    let mut session_active = false;
+
+    if let Some(active) = active_session {
+        if let Some(work_item_id) = active.work_item_id.as_ref() {
+            if let Some(found) = backlog.iter().find(|item| &item.id == work_item_id) {
+                task = Some(found.clone());
+                session = Some(active.clone());
+                session_active = true;
+            }
+        }
+    }
+
+    if task.is_none() {
+        if let Some(ended) = fetch_latest_ended_session(db_path)? {
+            if let Some(work_item_id) = ended.work_item_id.as_ref() {
+                if let Some(found) = backlog.iter().find(|item| &item.id == work_item_id) {
+                    task = Some(found.clone());
+                    session = Some(ended);
+                    session_active = false;
+                }
+            }
+        }
+    }
+
+    if task.is_none() {
+        let Some(focus) = focus_task else {
+            return Ok(None);
+        };
+        let has_resume = focus
+            .resume_summary
+            .as_ref()
+            .is_some_and(|value| !value.trim().is_empty());
+        let has_repo = focus
+            .primary_repository_id
+            .as_ref()
+            .is_some_and(|value| !value.trim().is_empty());
+        if !has_resume && !has_repo {
+            return Ok(None);
+        }
+        task = Some(focus.clone());
+    }
+
+    let task = task.expect("continue work task resolved");
+    continue_work_from_task_session(db_path, &task, session.as_ref(), session_active)
+}
+
+pub fn build_continue_work_for_organization(
+    db_path: &Path,
+    backlog: &[WorkItemDto],
+    organization_id: &str,
+) -> Result<Option<ContinueWorkDto>, String> {
+    if let Some(ended) = fetch_latest_ended_session_for_organization(db_path, organization_id)? {
+        if let Some(work_item_id) = ended.work_item_id.as_ref() {
+            if let Some(found) = backlog.iter().find(|item| &item.id == work_item_id) {
+                return continue_work_from_task_session(db_path, found, Some(&ended), false);
+            }
+        }
+    }
+
+    let fallback = backlog
+        .iter()
+        .filter(|item| item.organization_id.as_deref() == Some(organization_id))
+        .filter(|item| is_planning_visible(item))
+        .find(|item| {
+            item.resume_summary
+                .as_ref()
+                .is_some_and(|value| !value.trim().is_empty())
+                || item
+                    .primary_repository_id
+                    .as_ref()
+                    .is_some_and(|value| !value.trim().is_empty())
+        });
+
+    let Some(task) = fallback else {
+        return Ok(None);
+    };
+
+    continue_work_from_task_session(db_path, task, None, false)
+}
+
+fn continue_work_from_task_session(
+    db_path: &Path,
+    task: &WorkItemDto,
+    session: Option<&SessionLogDto>,
+    session_active: bool,
+) -> Result<Option<ContinueWorkDto>, String> {
+    let repository_id = session
+        .and_then(|entry| entry.repository_id.clone())
+        .or_else(|| task.primary_repository_id.clone());
+
+    let organization_name = if let Some(organization_id) = task.organization_id.as_deref() {
+        fetch_organization_by_id(db_path, organization_id)?.map(|organization| organization.name)
+    } else {
+        None
+    };
+
+    let repository_name = if let Some(repository_id) = repository_id.as_deref() {
+        fetch_repository_by_id(db_path, repository_id)?.map(|repository| repository.name)
+    } else {
+        None
+    };
+
+    let last_activity_at = session
+        .and_then(|entry| {
+            entry
+                .ended_at
+                .clone()
+                .or_else(|| Some(entry.started_at.clone()))
+        })
+        .unwrap_or_else(|| task.updated_at.clone());
+
+    let stopped_here = session
+        .and_then(|entry| entry.result.clone())
+        .filter(|value| !value.trim().is_empty());
+    let next_step = session
+        .and_then(|entry| entry.decisions.clone())
+        .filter(|value| !value.trim().is_empty());
+    let resume_summary = compose_handoff_resume_summary(
+        stopped_here.as_deref(),
+        next_step.as_deref(),
+    )
+    .or_else(|| task.resume_summary.clone());
+
+    let handoff_from_yesterday = session
+        .and_then(|entry| entry.ended_at.as_deref().or(Some(entry.started_at.as_str())))
+        .is_some_and(is_iso_date_yesterday);
+
+    let branch_name = session.and_then(|entry| {
+        entry
+            .git_activity
+            .as_ref()
+            .and_then(|git| git.ended_branch.clone())
+            .or_else(|| entry.branch_name.clone())
+    });
+
+    Ok(Some(ContinueWorkDto {
+        work_item_id: task.id.clone(),
+        title: task.title.clone(),
+        external_key: task.external_key.clone(),
+        organization_id: task.organization_id.clone(),
+        organization_name,
+        repository_id,
+        repository_name,
+        branch_name,
+        last_activity_at,
+        resume_summary,
+        stopped_here,
+        next_step,
+        session_id: session.map(|entry| entry.id.clone()),
+        session_goal: session.and_then(|entry| entry.goal.clone()),
+        session_decisions: session.and_then(|entry| entry.decisions.clone()),
+        session_result: session.and_then(|entry| entry.result.clone()),
+        session_active,
+        handoff_from_yesterday,
+    }))
+}
+
+pub fn build_context_switch_origin(
+    db_path: &Path,
+    session_id: Option<&str>,
+    repository_id: Option<&str>,
+    work_item_id: Option<&str>,
+) -> Result<ContextSwitchOriginDto, String> {
+    let session = if let Some(session_id) = session_id {
+        fetch_session_by_id(db_path, session_id)?
+    } else {
+        None
+    };
+
+    let work_item = if let Some(work_item_id) = session
+        .as_ref()
+        .and_then(|entry| entry.work_item_id.as_deref())
+        .or(work_item_id)
+    {
+        fetch_work_item_by_id(db_path, work_item_id)?
+    } else {
+        None
+    };
+
+    let repository_id = session
+        .as_ref()
+        .and_then(|entry| entry.repository_id.clone())
+        .or_else(|| {
+            work_item
+                .as_ref()
+                .and_then(|item| item.primary_repository_id.clone())
+        })
+        .or_else(|| repository_id.map(str::to_string));
+
+    let repository = if let Some(repository_id) = repository_id.as_deref() {
+        fetch_repository_by_id(db_path, repository_id)?
+    } else {
+        None
+    };
+
+    let organization_id = work_item
+        .as_ref()
+        .and_then(|item| item.organization_id.clone())
+        .or_else(|| {
+            repository
+                .as_ref()
+                .and_then(|entry| entry.organization_id.clone())
+        });
+
+    let organization_name = if let Some(organization_id) = organization_id.as_deref() {
+        fetch_organization_by_id(db_path, organization_id)?.map(|org| org.name)
+    } else {
+        repository
+            .as_ref()
+            .and_then(|entry| entry.organization_name.clone())
+    };
+
+    let tree = repository
+        .as_ref()
+        .and_then(|entry| entry.local_path.as_deref())
+        .filter(|path| !path.trim().is_empty())
+        .map(working_tree_status)
+        .unwrap_or(crate::dto::WorkingTreeStatusDto {
+            dirty: false,
+            changed_count: 0,
+        });
+
+    let branch_name = session
+        .as_ref()
+        .and_then(|entry| entry.branch_name.clone())
+        .or_else(|| {
+            repository
+                .as_ref()
+                .and_then(|entry| entry.local_path.as_deref())
+                .and_then(|path| crate::git::git_snapshot(path).ok())
+                .and_then(|snapshot| snapshot.branch_name)
+        });
+
+    let last_note = session
+        .as_ref()
+        .and_then(|entry| entry.result.clone())
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            work_item
+                .as_ref()
+                .and_then(|item| item.resume_summary.clone())
+                .filter(|value| !value.trim().is_empty())
+        })
+        .or_else(|| {
+            session
+                .as_ref()
+                .and_then(|entry| entry.goal.clone())
+                .filter(|value| !value.trim().is_empty())
+        });
+
+    Ok(ContextSwitchOriginDto {
+        organization_id,
+        organization_name,
+        work_item_id: work_item.as_ref().map(|item| item.id.clone()),
+        work_item_title: work_item.as_ref().map(|item| item.title.clone()),
+        external_key: work_item
+            .as_ref()
+            .and_then(|item| item.external_key.clone()),
+        repository_id,
+        repository_name: repository.as_ref().map(|entry| entry.name.clone()),
+        branch_name,
+        session_id: session.as_ref().map(|entry| entry.id.clone()),
+        session_active: session
+            .as_ref()
+            .is_some_and(|entry| entry.ended_at.is_none()),
+        last_note,
+        has_uncommitted_changes: tree.dirty,
+        uncommitted_count: tree.changed_count,
+    })
+}
+
+pub fn build_session_handoff_summary(
+    db_path: &Path,
+    session_id: &str,
+) -> Result<SessionHandoffSummaryDto, String> {
+    let session = fetch_session_by_id(db_path, session_id)?
+        .ok_or_else(|| "Sessao nao encontrada.".to_string())?;
+
+    let work_item = if let Some(work_item_id) = session.work_item_id.as_deref() {
+        fetch_work_item_by_id(db_path, work_item_id)?
+    } else {
+        None
+    };
+
+    let repository_id = session
+        .repository_id
+        .clone()
+        .or_else(|| {
+            work_item
+                .as_ref()
+                .and_then(|item| item.primary_repository_id.clone())
+        });
+
+    let repository = if let Some(repository_id) = repository_id.as_deref() {
+        fetch_repository_by_id(db_path, repository_id)?
+    } else {
+        None
+    };
+
+    let organization_id = work_item
+        .as_ref()
+        .and_then(|item| item.organization_id.clone())
+        .or_else(|| {
+            repository
+                .as_ref()
+                .and_then(|entry| entry.organization_id.clone())
+        });
+
+    let organization_name = if let Some(organization_id) = organization_id.as_deref() {
+        fetch_organization_by_id(db_path, organization_id)?.map(|org| org.name)
+    } else {
+        repository
+            .as_ref()
+            .and_then(|entry| entry.organization_name.clone())
+    };
+
+    let project_id = work_item
+        .as_ref()
+        .and_then(|item| item.project_id.clone())
+        .or_else(|| repository.as_ref().and_then(|entry| entry.project_id.clone()));
+
+    let project_name = if let Some(project_id) = project_id.as_deref() {
+        fetch_project_by_id(db_path, project_id)?.map(|project| project.name)
+    } else {
+        repository
+            .as_ref()
+            .and_then(|entry| entry.project_name.clone())
+    };
+
+    let persisted_git = session.git_activity.clone();
+
+    let live_commits = if session.ended_at.is_none() {
+        repository
+            .as_ref()
+            .and_then(|entry| entry.local_path.as_deref())
+            .filter(|path| !path.trim().is_empty())
+            .map(|path| {
+                list_session_commits(
+                    path,
+                    &session.started_at,
+                    persisted_git
+                        .as_ref()
+                        .and_then(|git| git.started_head.as_deref()),
+                    20,
+                )
+            })
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+
+    let commits = if !live_commits.is_empty() {
+        live_commits
+    } else {
+        persisted_git
+            .as_ref()
+            .map(|git| git.commits.clone())
+            .unwrap_or_default()
+    };
+
+    let artifacts = if let Some(work_item_id) = session.work_item_id.as_deref() {
+        fetch_artifacts_for_work_item(db_path, work_item_id)?
+            .into_iter()
+            .filter(|artifact| artifact.created_at.as_str() >= session.started_at.as_str())
+            .map(|artifact| SessionHandoffArtifactDto {
+                title: artifact
+                    .title
+                    .unwrap_or_else(|| artifact.artifact_type.clone()),
+                url: artifact.url,
+                artifact_type: artifact.artifact_type,
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    let started_branch = persisted_git
+        .as_ref()
+        .and_then(|git| git.started_branch.clone())
+        .or(session.branch_name.clone());
+    let ended_branch = persisted_git
+        .as_ref()
+        .and_then(|git| git.ended_branch.clone());
+    let branch_name = ended_branch.clone().or(started_branch.clone());
+
+    let tree = repository
+        .as_ref()
+        .and_then(|entry| entry.local_path.as_deref())
+        .filter(|path| !path.trim().is_empty())
+        .map(working_tree_status)
+        .unwrap_or(crate::dto::WorkingTreeStatusDto {
+            dirty: false,
+            changed_count: 0,
+        });
+
+    Ok(SessionHandoffSummaryDto {
+        session_id: session.id,
+        started_at: session.started_at.clone(),
+        duration_label: format_session_duration_label(
+            &session.started_at,
+            session.ended_at.as_deref(),
+        ),
+        work_item_id: work_item.as_ref().map(|item| item.id.clone()),
+        work_item_title: work_item.as_ref().map(|item| item.title.clone()),
+        external_key: work_item
+            .as_ref()
+            .and_then(|item| item.external_key.clone())
+            .or(session.work_item_external_key),
+        organization_name,
+        project_name,
+        repository_id,
+        repository_name: repository.as_ref().map(|entry| entry.name.clone()),
+        branch_name,
+        ended_branch,
+        started_head: persisted_git
+            .as_ref()
+            .and_then(|git| git.started_head.clone()),
+        ended_head: persisted_git
+            .as_ref()
+            .and_then(|git| git.ended_head.clone()),
+        commits,
+        worktree_path: persisted_git
+            .as_ref()
+            .and_then(|git| git.worktree_path.clone()),
+        has_uncommitted_changes: tree.dirty,
+        uncommitted_count: tree.changed_count,
+        artifacts,
+    })
+}
+
+pub fn build_multi_focus_groups(
+    backlog: &[WorkItemDto],
+    organizations: &[OrganizationListItemDto],
+    projects: &[ProjectListItemDto],
+    repositories: &[RepositoryListItemDto],
+) -> Vec<MultiFocusGroupDto> {
+    let org_names: HashMap<&str, &str> = organizations
+        .iter()
+        .map(|org| (org.id.as_str(), org.name.as_str()))
+        .collect();
+    let project_names: HashMap<&str, &str> = projects
+        .iter()
+        .map(|project| (project.id.as_str(), project.name.as_str()))
+        .collect();
+    let repository_names: HashMap<&str, &str> = repositories
+        .iter()
+        .map(|repository| (repository.id.as_str(), repository.name.as_str()))
+        .collect();
+
+    let mut grouped: HashMap<String, Vec<&WorkItemDto>> = HashMap::new();
+
+    for task in backlog
+        .iter()
+        .filter(|item| is_planning_visible(item))
+        .filter(|item| item.status == "doing")
+    {
+        let group_key = if let Some(project_id) = task
+            .project_id
+            .as_ref()
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+        {
+            format!("project:{project_id}")
+        } else if let Some(repository_id) = task
+            .primary_repository_id
+            .as_ref()
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+        {
+            format!("repository:{repository_id}")
+        } else {
+            continue;
+        };
+
+        grouped.entry(group_key).or_default().push(task);
+    }
+
+    let mut groups: Vec<MultiFocusGroupDto> = grouped
+        .into_iter()
+        .filter(|(_, tasks)| tasks.len() >= 2)
+        .map(|(group_key, tasks)| {
+            let first = tasks[0];
+            let project_id = group_key
+                .strip_prefix("project:")
+                .map(str::to_string)
+                .or_else(|| first.project_id.clone());
+            let repository_id = if group_key.starts_with("repository:") {
+                group_key.strip_prefix("repository:").map(str::to_string)
+            } else {
+                first.primary_repository_id.clone()
+            };
+
+            let organization_id = first.organization_id.clone();
+            let organization_name = organization_id
+                .as_deref()
+                .and_then(|id| org_names.get(id).map(|name| (*name).to_string()));
+            let project_name = project_id
+                .as_deref()
+                .and_then(|id| project_names.get(id).map(|name| (*name).to_string()));
+            let repository_name = repository_id
+                .as_deref()
+                .and_then(|id| repository_names.get(id).map(|name| (*name).to_string()));
+
+            let mut task_dtos: Vec<MultiFocusTaskDto> = tasks
+                .into_iter()
+                .map(|task| MultiFocusTaskDto {
+                    id: task.id.clone(),
+                    title: task.title.clone(),
+                    external_key: task.external_key.clone(),
+                })
+                .collect();
+            task_dtos.sort_by(|left, right| left.title.cmp(&right.title));
+
+            MultiFocusGroupDto {
+                group_key,
+                organization_id,
+                organization_name,
+                project_id,
+                project_name,
+                repository_id,
+                repository_name,
+                tasks: task_dtos,
+            }
+        })
+        .collect();
+
+    groups.sort_by(|left, right| {
+        left.organization_name
+            .cmp(&right.organization_name)
+            .then_with(|| left.project_name.cmp(&right.project_name))
+            .then_with(|| left.repository_name.cmp(&right.repository_name))
+            .then_with(|| left.group_key.cmp(&right.group_key))
+    });
+
+    groups
 }
 
 pub fn build_recoverable_context(

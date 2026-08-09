@@ -25,6 +25,7 @@ pub fn sync_organization_pm_tasks(
         updated: 0,
         unchanged: 0,
         removed: 0,
+        inbox_created: 0,
         errors: Vec::new(),
     };
 
@@ -79,6 +80,7 @@ pub fn sync_organization_pm_tasks(
                 aggregate.updated += result.updated;
                 aggregate.unchanged += result.unchanged;
                 aggregate.removed += result.removed;
+                aggregate.inbox_created += result.inbox_created;
                 let now = iso_now()?;
                 update_integration_sync_status(db_path, &connection.id, Some(&now), None)?;
             }
@@ -153,6 +155,7 @@ fn upsert_external_tasks(
         updated: 0,
         unchanged: 0,
         removed: 0,
+        inbox_created: 0,
         errors: Vec::new(),
     };
 
@@ -198,6 +201,7 @@ fn upsert_external_tasks(
         Err(error) => result.errors.push(error),
     }
 
+    result.inbox_created = result.created;
     Ok(result)
 }
 
@@ -217,6 +221,9 @@ pub fn get_deadline_alerts(db_path: &Path) -> Result<DeadlineAlertsDto, String> 
 
     for item in items {
         if item.wcp_dismissed_at.is_some() {
+            continue;
+        }
+        if item.wcp_inbox_at.is_some() {
             continue;
         }
         if item.source_type != "imported" {

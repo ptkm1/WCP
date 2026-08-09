@@ -1005,6 +1005,7 @@
 
 .repoPanel {
   min-width: 0;
+  overflow: visible;
 }
 
 .repoHeader {
@@ -1603,6 +1604,7 @@
   background: linear-gradient(135deg, #141414 0%, rgba(34, 197, 94, 0.08) 100%);
   border: 1px solid rgba(34, 197, 94, 0.16);
   min-width: 0;
+  overflow: visible;
 }
 
 .contextSteps {
@@ -1673,28 +1675,226 @@
   background: rgba(255, 255, 255, 0.04);
   border: 1px solid rgba(34, 197, 94, 0.12);
   min-width: 0;
+  overflow: visible;
 }
 
 .reposWizardLayout {
   display: grid;
-  grid-template-columns: minmax(200px, 260px) minmax(0, 1fr);
-  gap: 18px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
   min-width: 0;
-  align-items: start;
+  align-items: stretch;
 }
 
 .reposWizardLayout > * {
   min-width: 0;
 }
 
-.reposWizardSidebar {
-  display: grid;
-  gap: 10px;
-  align-content: start;
-}
-
 .reposWizardMain {
   align-content: start;
+  overflow: visible;
+}
+
+.repoPicker {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  border-radius: 18px;
+  border: 1px solid rgba(34, 197, 94, 0.16);
+  background:
+    radial-gradient(120% 80% at 0% 0%, rgba(34, 197, 94, 0.1), transparent 55%),
+    rgba(15, 15, 15, 0.72);
+  min-width: 0;
+}
+
+.repoPickerHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.repoPickerHeading {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+}
+
+.repoPickerHeading h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: #fafafa;
+}
+
+.repoPickerHeading p {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: #a1a1aa;
+}
+
+.repoPickerSearch {
+  position: relative;
+}
+
+.repoPickerSearchIcon {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  transform: translateY(-50%);
+  color: #71717a;
+  pointer-events: none;
+}
+
+.repoPickerSearchInput {
+  padding-left: 2.25rem;
+}
+
+.repoPickerEmpty {
+  margin: 0;
+  padding: 14px;
+  border-radius: 12px;
+  border: 1px dashed rgba(34, 197, 94, 0.22);
+  color: #a1a1aa;
+  font-size: 13px;
+}
+
+.repoPickerGroups {
+  display: grid;
+  gap: 16px;
+}
+
+.repoPickerGroup {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.repoPickerGroupTitle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #71717a;
+}
+
+.repoPickerGroupTitle > span:nth-child(2) {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.repoPickerGroupCount {
+  margin-left: auto;
+}
+
+.repoPickerGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 10px;
+}
+
+.repoPickerCard {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(34, 197, 94, 0.14);
+  background: rgba(20, 20, 20, 0.92);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 140ms ease,
+    background 140ms ease,
+    transform 140ms ease;
+}
+
+.repoPickerCard:hover {
+  border-color: rgba(34, 197, 94, 0.32);
+  background: rgba(34, 197, 94, 0.06);
+  transform: translateY(-1px);
+}
+
+.repoPickerCard-active {
+  border-color: rgba(34, 197, 94, 0.5);
+  background: rgba(34, 197, 94, 0.12);
+  box-shadow: 0 0 0 1px rgba(34, 197, 94, 0.12);
+}
+
+.repoPickerCardTop {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.repoPickerCardName {
+  flex: 1;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #fafafa;
+  overflow-wrap: anywhere;
+}
+
+.repoPickerCheck {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  background: rgba(34, 197, 94, 0.2);
+  color: #4ade80;
+  flex-shrink: 0;
+}
+
+.repoPickerCardMeta {
+  display: block;
+  padding-left: 24px;
+  font-size: 12px;
+  color: #a1a1aa;
+  overflow-wrap: anywhere;
+}
+
+.repoPickerSelectedMeta {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+  padding-top: 4px;
+  border-top: 1px solid rgba(34, 197, 94, 0.12);
+}
+
+.repoPickerSelectedMeta article {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(34, 197, 94, 0.1);
+}
+
+.repoPickerSelectedMeta span {
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #71717a;
+}
+
+.repoPickerSelectedMeta strong {
+  font-size: 13px;
+  font-weight: 500;
+  color: #e4e4e7;
+  overflow-wrap: anywhere;
 }
 
 .reposWizardDetails {
@@ -1883,7 +2083,7 @@
     overflow-y: visible;
   }
 
-  .reposWizardLayout {
+  .repoPickerGrid {
     grid-template-columns: 1fr;
   }
 }
@@ -1964,4 +2164,57 @@
   .timelineItem {
     flex-direction: column;
   }
+}
+
+.repoPreflightList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.repoPreflightItem {
+  display: grid;
+  grid-template-columns: 1.25rem minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.repoPreflightItem strong {
+  display: block;
+  font-size: 0.85rem;
+  margin-bottom: 2px;
+}
+
+.repoPreflightItem span,
+.repoPreflightItem code {
+  color: #d4d4d8;
+  font-size: 0.9rem;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.repoPreflightItem-ok {
+  border-color: rgba(52, 211, 153, 0.22);
+}
+
+.repoPreflightItem-warning {
+  border-color: rgba(251, 191, 36, 0.28);
+}
+
+.repoPreflightDivergences {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.repoPreflightDivergences li {
+  font-size: 0.9rem;
 }

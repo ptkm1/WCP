@@ -370,7 +370,7 @@ export function SelectableListItem({
       type="button"
       variant="ghost"
       className={cn(
-        "h-auto w-full min-w-0 flex-col items-start gap-1.5 rounded-2xl border px-4 py-3 text-left font-normal whitespace-normal hover:bg-accent/40",
+        "h-auto w-full min-w-0 flex-col items-stretch justify-start gap-1.5 overflow-visible rounded-2xl border px-4 py-3 text-left font-normal whitespace-normal hover:bg-accent/40",
         active &&
           "border-primary/45 bg-primary/10 shadow-glow hover:bg-primary/10",
         linked && !active && "border-dashed border-primary/25",
@@ -380,11 +380,11 @@ export function SelectableListItem({
       <div className="flex min-w-0 w-full items-start gap-3">
         {leading}
         <div className="min-w-0 flex-1">
-          <span className="block min-w-0 truncate font-semibold text-foreground">
+          <span className="block min-w-0 break-words font-semibold text-foreground">
             {title}
           </span>
           {subtitle ? (
-            <span className="mt-1 block min-w-0 truncate text-xs text-muted-foreground">
+            <span className="mt-1 block min-w-0 break-words text-xs text-muted-foreground">
               {subtitle}
             </span>
           ) : null}

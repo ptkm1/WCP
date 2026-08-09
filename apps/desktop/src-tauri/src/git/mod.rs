@@ -2,7 +2,7 @@ use crate::db::{escape_sql, find_work_item_by_external_key, get_optional_string,
 use crate::dto::{
     ApplyFullContextResultDto, FixRepositoryRemoteResultDto, GitSnapshot, IdentityValidationDto,
     LocalRepositoryInspectionDto, OrganizationIdentityImportDto, RepositoryGuardrailDto,
-    ValidationCheckDto,
+    SessionGitCommitDto, ValidationCheckDto, WorkingTreeStatusDto,
 };
 use crate::integrations::extract_ticket_keys_from_branch;
 use std::path::{Path, PathBuf};
@@ -279,6 +279,7 @@ pub fn git_snapshot(repository_path: &str) -> Result<GitSnapshot, String> {
         git_user_email: git_config_layered(repository_path, "user.email").0,
         ssh_host_alias: remote_url.as_deref().and_then(parse_ssh_host_alias),
         branch_name: git_value(repository_path, &["rev-parse", "--abbrev-ref", "HEAD"])?,
+        head_sha: git_value(repository_path, &["rev-parse", "--short", "HEAD"])?,
         last_commit_subject: git_value(repository_path, &["log", "-1", "--format=%s"])?,
     })
 }
@@ -620,6 +621,156 @@ pub fn git_value(repository_path: &str, args: &[&str]) -> Result<Option<String>,
     }
 
     Ok(None)
+}
+
+pub fn list_commits_since(
+    repository_path: &str,
+    since_iso: &str,
+    limit: usize,
+) -> Vec<SessionGitCommitDto> {
+    let capped = limit.clamp(1, 20);
+    let since_arg = format!("--since={since_iso}");
+    let max_count = format!("--max-count={capped}");
+    parse_commit_log_output(
+        Command::new("git")
+            .args([
+                "log",
+                "--pretty=format:%h%x09%s",
+                &since_arg,
+                &max_count,
+                "--no-merges",
+            ])
+            .current_dir(repository_path)
+            .output(),
+    )
+}
+
+pub fn list_commits_range(
+    repository_path: &str,
+    started_head: &str,
+    limit: usize,
+) -> Vec<SessionGitCommitDto> {
+    let trimmed = started_head.trim();
+    if trimmed.is_empty() {
+        return Vec::new();
+    }
+
+    let capped = limit.clamp(1, 20);
+    let range = format!("{trimmed}..HEAD");
+    let max_count = format!("--max-count={capped}");
+    parse_commit_log_output(
+        Command::new("git")
+            .args([
+                "log",
+                "--pretty=format:%h%x09%s",
+                &range,
+                &max_count,
+                "--no-merges",
+            ])
+            .current_dir(repository_path)
+            .output(),
+    )
+}
+
+pub fn list_session_commits(
+    repository_path: &str,
+    started_at: &str,
+    started_head: Option<&str>,
+    limit: usize,
+) -> Vec<SessionGitCommitDto> {
+    if let Some(head) = started_head.map(str::trim).filter(|value| !value.is_empty()) {
+        let commits = list_commits_range(repository_path, head, limit);
+        if !commits.is_empty() {
+            return commits;
+        }
+        // Range empty can mean no new commits; only fall back when range failed to resolve.
+        if git_value(repository_path, &["rev-parse", "--verify", head])
+            .ok()
+            .flatten()
+            .is_some()
+        {
+            return commits;
+        }
+    }
+
+    list_commits_since(repository_path, started_at, limit)
+}
+
+pub fn resolve_diverging_worktree_path(repository_path: &str) -> Option<String> {
+    let toplevel = git_value(repository_path, &["rev-parse", "--show-toplevel"])
+        .ok()
+        .flatten()?;
+    let repo = Path::new(repository_path);
+    let top = Path::new(&toplevel);
+    let repo_canon = repo.canonicalize().unwrap_or_else(|_| repo.to_path_buf());
+    let top_canon = top.canonicalize().unwrap_or_else(|_| top.to_path_buf());
+    if repo_canon == top_canon {
+        return None;
+    }
+    Some(toplevel)
+}
+
+pub fn working_tree_status(repository_path: &str) -> WorkingTreeStatusDto {
+    let output = Command::new("git")
+        .args(["status", "--porcelain"])
+        .current_dir(repository_path)
+        .output();
+
+    let Ok(output) = output else {
+        return WorkingTreeStatusDto {
+            dirty: false,
+            changed_count: 0,
+        };
+    };
+    if !output.status.success() {
+        return WorkingTreeStatusDto {
+            dirty: false,
+            changed_count: 0,
+        };
+    }
+
+    let changed_count = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .count();
+
+    WorkingTreeStatusDto {
+        dirty: changed_count > 0,
+        changed_count,
+    }
+}
+
+fn parse_commit_log_output(output: Result<std::process::Output, std::io::Error>) -> Vec<SessionGitCommitDto> {
+    let Ok(output) = output else {
+        return Vec::new();
+    };
+    if !output.status.success() {
+        return Vec::new();
+    }
+
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                return None;
+            }
+            let (sha, subject) = match trimmed.split_once('\t') {
+                Some(parts) => parts,
+                None => return None,
+            };
+            let sha = sha.trim();
+            let subject = subject.trim();
+            if sha.is_empty() || subject.is_empty() {
+                return None;
+            }
+            Some(SessionGitCommitDto {
+                sha: sha.to_string(),
+                subject: subject.to_string(),
+            })
+        })
+        .collect()
 }
 
 pub fn run_git_config(repository_path: &str, key: &str, value: &str) -> Result<(), String> {
