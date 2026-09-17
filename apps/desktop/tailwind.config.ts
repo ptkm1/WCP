@@ -57,6 +57,10 @@ export default {
       },
       boxShadow: {
         glow: "0 0 24px hsl(142 71% 45% / 0.15)",
+        glass: "0 10px 40px rgba(0, 0, 0, 0.35)",
+      },
+      backdropBlur: {
+        glass: "44px",
       },
     },
   },

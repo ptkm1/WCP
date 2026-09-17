@@ -1,23 +1,25 @@
 use crate::db::{
     accept_inbox_work_item as persist_accept_inbox, commit_today_plan,
-    dismiss_work_item as persist_dismiss_work_item, ensure_db_ready, escape_sql,
-    fetch_all_dependencies, fetch_artifact_by_id, fetch_inbox_work_items, fetch_note_by_id,
-    fetch_repository_by_id, fetch_session_by_id, fetch_work_item_by_id, fetch_work_items,
-    find_work_item_by_external_key, nullable_sql, resolve_db_path, resolve_primary_workspace_id,
-    restore_dismissed_work_item as persist_restore_dismissed_work_item, sqlite_exec,
+    detach_work_item_artifact as persist_detach_artifact, dismiss_work_item as persist_dismiss_work_item,
+    ensure_db_ready, escape_sql, fetch_all_dependencies, fetch_artifact_by_id, fetch_inbox_work_items,
+    fetch_note_by_id, fetch_repository_by_id, fetch_session_by_id, fetch_work_item_by_id,
+    fetch_work_items, find_work_item_by_external_key, nullable_sql, resolve_db_path,
+    resolve_primary_workspace_id, restore_dismissed_work_item as persist_restore_dismissed_work_item,
+    sqlite_exec, sqlite_json,
 };
 use crate::domain::{
     build_context_switch_origin, build_continue_work_for_organization, build_session_handoff_summary,
     build_today_plan, create_work_item as persist_work_item,
     create_work_item_dependency as insert_dependency,
     delete_work_item_dependency as remove_dependency, duplicate_work_item as persist_duplicate,
-    load_task_context, update_work_item as persist_work_item_update,
+    format_merge_request_title, load_task_context, merge_request_metadata_json,
+    parse_merge_request_url, update_work_item as persist_work_item_update,
 };
 use crate::dto::{
     ApplyWorkItemContextResultDto, AttachArtifactResultDto, CommitTodayPlanResultDto,
-    ContextSwitchOriginDto, ContinueWorkDto, EndSessionResultDto, SaveNoteResultDto,
-    SaveWorkItemResultDto, SessionGitActivityDto, SessionHandoffSummaryDto, StartSessionResultDto,
-    TaskContextDto,
+    ContextSwitchOriginDto, ContinueWorkDto, DetachArtifactResultDto, EndSessionResultDto,
+    SaveNoteResultDto, SaveWorkItemResultDto, SessionGitActivityDto, SessionHandoffSummaryDto,
+    StartSessionResultDto, TaskContextDto,
 };
 use crate::git::{
     apply_repository_full_context, git_snapshot, list_session_commits,
@@ -470,6 +472,7 @@ pub fn attach_task_artifact(
     artifact_type: String,
     title: Option<String>,
     url: Option<String>,
+    role: Option<String>,
 ) -> Result<AttachArtifactResultDto, String> {
     let db_path = resolve_db_path()?;
     ensure_db_ready(&db_path)?;
@@ -481,27 +484,68 @@ pub fn attach_task_artifact(
         .map(|value| value.trim())
         .filter(|value| !value.is_empty())
         .map(str::to_string);
+    let parsed_mr = trimmed_url
+        .as_deref()
+        .and_then(parse_merge_request_url);
     let resolved_artifact_type = resolve_artifact_type(&artifact_type, trimmed_url.as_deref());
+    let trimmed_title = title
+        .as_ref()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    let resolved_title = if trimmed_title.is_some() {
+        trimmed_title
+    } else {
+        parsed_mr
+            .as_ref()
+            .map(|parsed| format_merge_request_title(parsed, role.as_deref()))
+    };
+    let metadata_json = parsed_mr
+        .as_ref()
+        .map(|parsed| merge_request_metadata_json(parsed, role.as_deref()))
+        .transpose()?;
     let artifact_source_type = if trimmed_url.is_some() {
         "imported"
     } else {
         "manual"
     };
 
+    if let Some(url) = trimmed_url.as_deref() {
+        let existing = sqlite_json(
+            &db_path,
+            &format!(
+                "SELECT a.id
+                 FROM artifacts a
+                 INNER JOIN entity_links l ON l.to_entity_id = a.id
+                 WHERE l.from_entity_type = 'work_item'
+                   AND l.from_entity_id = '{}'
+                   AND l.to_entity_type = 'artifact'
+                   AND lower(COALESCE(a.url, '')) = lower('{}')
+                 LIMIT 1;",
+                escape_sql(&work_item_id),
+                escape_sql(url)
+            ),
+        )?;
+        if !existing.is_empty() {
+            return Err("Este MR ja esta vinculado a esta tarefa.".to_string());
+        }
+    }
+
     sqlite_exec(
         &db_path,
         &format!(
             "INSERT INTO artifacts (
-              id, workspace_id, repository_id, type, title, url, source_type, created_at, updated_at
+              id, workspace_id, repository_id, type, title, url, metadata_json, source_type, created_at, updated_at
             ) VALUES (
-              '{}', '{}', {}, '{}', {}, {}, '{}', '{}', '{}'
+              '{}', '{}', {}, '{}', {}, {}, {}, '{}', '{}', '{}'
             );",
             escape_sql(&artifact_id),
             escape_sql(&workspace_id),
             nullable_sql(repository_id.as_deref()),
             escape_sql(&resolved_artifact_type),
-            nullable_sql(title.as_deref()),
+            nullable_sql(resolved_title.as_deref()),
             nullable_sql(trimmed_url.as_deref()),
+            nullable_sql(metadata_json.as_deref()),
             escape_sql(artifact_source_type),
             escape_sql(&now),
             escape_sql(&now)
@@ -528,6 +572,17 @@ pub fn attach_task_artifact(
         .ok_or_else(|| "Nao foi possivel carregar o artefato criado".to_string())?;
 
     Ok(AttachArtifactResultDto { artifact })
+}
+
+#[tauri::command]
+pub fn detach_task_artifact(
+    work_item_id: String,
+    artifact_id: String,
+) -> Result<DetachArtifactResultDto, String> {
+    let db_path = resolve_db_path()?;
+    ensure_db_ready(&db_path)?;
+    persist_detach_artifact(&db_path, &work_item_id, &artifact_id)?;
+    Ok(DetachArtifactResultDto { artifact_id })
 }
 
 #[tauri::command]
@@ -607,21 +662,11 @@ fn resolve_artifact_type(requested: &str, url: Option<&str>) -> String {
         return trimmed.to_string();
     }
 
-    let Some(url) = url.map(str::to_ascii_lowercase) else {
-        return if trimmed.is_empty() {
-            "link".to_string()
-        } else {
-            trimmed.to_string()
-        };
-    };
+    if url.is_some_and(crate::domain::is_merge_request_url) {
+        return "pr".to_string();
+    }
 
-    let is_pr = url.contains("/pull/")
-        || url.contains("/pulls/")
-        || url.contains("/-/merge_requests/")
-        || url.contains("/merge_requests/");
-    if is_pr {
-        "pr".to_string()
-    } else if trimmed.is_empty() {
+    if trimmed.is_empty() {
         "link".to_string()
     } else {
         trimmed.to_string()

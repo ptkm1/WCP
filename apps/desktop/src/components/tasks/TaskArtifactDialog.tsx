@@ -28,7 +28,7 @@ export function TaskArtifactDialog({
       open={open}
       onOpenChange={onOpenChange}
       title="Anexar link"
-      description="Adicione PRs, documentos ou outros links uteis."
+      description="Adicione documentos ou outros links uteis. Para GitLab/GitHub, use Vincular MR."
       submitLabel="Anexar link"
       busy={busy}
       submitDisabled={!url.trim()}

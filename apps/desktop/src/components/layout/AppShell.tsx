@@ -14,6 +14,11 @@ export function AppShell({
 }) {
   return (
     <div className={cn("app-shell", className)}>
+      <div
+        className="app-titlebar-drag"
+        data-tauri-drag-region
+        aria-hidden="true"
+      />
       {sidebar}
       <div className="app-main">
         {topBar}

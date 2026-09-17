@@ -512,4 +512,5 @@ export const sampleRepositoryIdentities: RepositoryIdentity[] = [
 ];
 
 export * from "./context";
+export * from "./merge-request";
 export * from "./sync";

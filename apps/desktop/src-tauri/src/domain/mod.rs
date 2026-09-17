@@ -22,8 +22,13 @@ use std::path::Path;
 mod context;
 mod context_links;
 mod context_resolve;
+mod merge_request;
 
 pub use context::resolve_repository_id_for_focus;
+pub use merge_request::{
+    format_merge_request_title, is_merge_request_url, merge_request_metadata_json,
+    parse_merge_request_url,
+};
 pub use context_links::{
     validate_repository_assignment, validate_work_context_links, validate_work_item_context,
     WorkContextLinksInput,

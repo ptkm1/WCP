@@ -27,13 +27,22 @@
     }
   },
   "app": {
+    "macOSPrivateApi": true,
     "windows": [
       {
         "label": "main",
         "title": "Work Context Platform",
         "width": 1320,
         "height": 900,
-        "resizable": true
+        "resizable": true,
+        "transparent": true,
+        "decorations": true,
+        "hiddenTitle": true,
+        "titleBarStyle": "Overlay",
+        "trafficLightPosition": {
+          "x": 16,
+          "y": 18
+        }
       }
     ]
   }

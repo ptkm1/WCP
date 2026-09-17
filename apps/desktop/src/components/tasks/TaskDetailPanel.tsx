@@ -7,6 +7,11 @@ import {
 import { DetailSection } from "@/components/layout/DetailSection";
 import { TaskArtifactDialog } from "@/components/tasks/TaskArtifactDialog";
 import { TaskDependencyDialog } from "@/components/tasks/TaskDependencyDialog";
+import {
+  isTaskMergeRequest,
+  TaskMergeRequestCards,
+} from "@/components/tasks/TaskMergeRequestCards";
+import { TaskMergeRequestDialog } from "@/components/tasks/TaskMergeRequestDialog";
 import { TaskNoteDialog } from "@/components/tasks/TaskNoteDialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -75,6 +80,7 @@ interface TaskArtifact {
   url?: string | null;
   artifactType: string;
   sourceType?: string;
+  metadataJson?: string | null;
   createdAt: string;
 }
 
@@ -160,6 +166,12 @@ export interface TaskDetailPanelProps {
   onClearDependencyError: () => void;
   onSaveNote: (title: string, content: string) => boolean | Promise<boolean>;
   onAttachArtifact: (title: string, url: string) => boolean | Promise<boolean>;
+  onAttachMergeRequest: (
+    title: string,
+    url: string,
+    role: string | null,
+  ) => boolean | Promise<boolean>;
+  onDetachArtifact: (artifactId: string) => void;
   onResumeSession: (session: TaskSession) => void;
 }
 
@@ -214,12 +226,20 @@ export function TaskDetailPanel({
   onClearDependencyError,
   onSaveNote,
   onAttachArtifact,
+  onAttachMergeRequest,
+  onDetachArtifact,
   onResumeSession,
 }: TaskDetailPanelProps) {
   const [detailTab, setDetailTab] = useState("activity");
   const [dependencyDialogOpen, setDependencyDialogOpen] = useState(false);
   const [noteDialogOpen, setNoteDialogOpen] = useState(false);
   const [artifactDialogOpen, setArtifactDialogOpen] = useState(false);
+  const [mergeRequestDialogOpen, setMergeRequestDialogOpen] = useState(false);
+
+  const mergeRequests = taskArtifacts.filter(isTaskMergeRequest);
+  const otherArtifacts = taskArtifacts.filter(
+    (artifact) => !isTaskMergeRequest(artifact),
+  );
 
   async function handleCreateDependency(
     relation: "depends_on" | "blocks",
@@ -242,6 +262,17 @@ export function TaskDetailPanel({
     const success = await onAttachArtifact(title, url);
     if (success) {
       setArtifactDialogOpen(false);
+    }
+  }
+
+  async function handleAttachMergeRequest(
+    title: string,
+    url: string,
+    role: string | null,
+  ) {
+    const success = await onAttachMergeRequest(title, url, role);
+    if (success) {
+      setMergeRequestDialogOpen(false);
     }
   }
 
@@ -498,6 +529,34 @@ export function TaskDetailPanel({
             </div>
           </div>
 
+          <DetailSection
+            title="Merge requests"
+            action={
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setMergeRequestDialogOpen(true)}
+              >
+                <Plus className="h-4 w-4" aria-hidden />
+                Vincular MR
+              </Button>
+            }
+          >
+            {mergeRequests.length > 0 ? (
+              <TaskMergeRequestCards
+                items={mergeRequests}
+                busy={contextBusy}
+                onDetach={onDetachArtifact}
+              />
+            ) : (
+              <StatusAlert status="warning" title="Nenhum MR vinculado">
+                Cole o link do GitLab ou GitHub para guardar o contexto desta
+                tarefa e encontrar depois na busca.
+              </StatusAlert>
+            )}
+          </DetailSection>
+
           {currentTask.description || currentTask.resumeSummary ? (
             <div className="taskContextSummary">
               {currentTask.description ? (
@@ -675,9 +734,9 @@ export function TaskDetailPanel({
                   </Button>
                 }
               >
-                {taskArtifacts.length > 0 ? (
+                {otherArtifacts.length > 0 ? (
                   <ul className="historyList">
-                    {taskArtifacts.map((artifact) => (
+                    {otherArtifacts.map((artifact) => (
                       <li key={artifact.id}>
                         <div>
                           <strong>
@@ -691,12 +750,20 @@ export function TaskDetailPanel({
                           <span>{formatDateTime(artifact.createdAt)}</span>
                           <code>{artifact.url ?? "-"}</code>
                         </div>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() => onDetachArtifact(artifact.id)}
+                          disabled={contextBusy}
+                        >
+                          Remover
+                        </Button>
                       </li>
                     ))}
                   </ul>
                 ) : (
                   <StatusAlert status="warning" title="Sem links">
-                    Anexe PRs, docs ou referencias uteis.
+                    Anexe docs ou referencias uteis. MRs ficam na secao acima.
                   </StatusAlert>
                 )}
               </DetailSection>
@@ -775,6 +842,12 @@ export function TaskDetailPanel({
             onOpenChange={setArtifactDialogOpen}
             busy={contextBusy}
             onSubmit={handleAttachArtifact}
+          />
+          <TaskMergeRequestDialog
+            open={mergeRequestDialogOpen}
+            onOpenChange={setMergeRequestDialogOpen}
+            busy={contextBusy}
+            onSubmit={handleAttachMergeRequest}
           />
         </div>
       ) : (

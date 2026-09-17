@@ -97,7 +97,7 @@ export function Popover({
             data-floating-menu=""
             style={position ?? undefined}
             className={cn(
-              "z-[250] min-w-[280px] max-w-[calc(100vw-24px)] rounded-2xl border border-border bg-popover p-4 shadow-xl",
+              "z-[250] min-w-[280px] max-w-[calc(100vw-24px)] rounded-3xl p-4 glass-panel-strong",
               !position && "pointer-events-none opacity-0",
               className,
             )}

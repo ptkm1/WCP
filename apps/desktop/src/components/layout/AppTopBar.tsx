@@ -75,7 +75,7 @@ export function AppTopBar({
         >
           <SearchField
             type="search"
-            className="h-9 rounded-xl bg-background/80"
+            className="h-9 rounded-xl border-white/12 bg-white/5 backdrop-blur-xl"
             placeholder="Buscar tarefas, notas, sessoes..."
             value={searchQuery}
             onChange={(event) => onSearchQueryChange(event.target.value)}
@@ -175,7 +175,11 @@ function FocusChip({
     <div className="app-topbar-focus">
       <Badge
         variant={active ? "success" : "secondary"}
-        className="shrink-0 text-[10px] uppercase tracking-wide"
+        className={cn(
+          "shrink-0 text-[10px] uppercase tracking-wide",
+          active &&
+            "rounded-full border-primary/45 bg-primary/30 text-accent-foreground shadow-glow backdrop-blur-sm",
+        )}
       >
         {active ? "Em foco" : "Foco"}
       </Badge>

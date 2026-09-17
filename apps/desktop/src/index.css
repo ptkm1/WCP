@@ -6,26 +6,41 @@
 
 @layer base {
   :root {
-    --background: 0 0% 4%;
+    --background: 240 10% 6%;
     --foreground: 0 0% 98%;
-    --card: 0 0% 7%;
+    --card: 240 8% 12%;
     --card-foreground: 0 0% 98%;
-    --popover: 0 0% 7%;
+    --popover: 240 10% 10%;
     --popover-foreground: 0 0% 98%;
     --primary: 142 71% 45%;
     --primary-foreground: 144 61% 5%;
-    --secondary: 0 0% 12%;
+    --secondary: 240 6% 16%;
     --secondary-foreground: 0 0% 98%;
-    --muted: 0 0% 12%;
-    --muted-foreground: 0 0% 62%;
-    --accent: 142 40% 12%;
+    --muted: 240 6% 16%;
+    --muted-foreground: 240 4% 76%;
+    --accent: 142 30% 14%;
     --accent-foreground: 142 70% 72%;
     --destructive: 0 62% 50%;
     --destructive-foreground: 0 0% 98%;
-    --border: 142 18% 16%;
-    --input: 142 12% 14%;
+    --border: 240 5% 28%;
+    --input: 240 5% 24%;
     --ring: 142 71% 45%;
-    --radius: 0.75rem;
+    --radius: 1rem;
+
+    --glass-bg: rgba(255, 255, 255, 0.09);
+    --glass-bg-strong: rgba(255, 255, 255, 0.14);
+    --glass-bg-soft: rgba(8, 10, 16, 0.48);
+    --glass-border: rgba(255, 255, 255, 0.14);
+    --glass-border-strong: rgba(255, 255, 255, 0.22);
+    --glass-highlight: rgba(255, 255, 255, 0.28);
+    --glass-shadow: 0 10px 40px rgba(0, 0, 0, 0.35);
+    --glass-blur: 44px;
+    --glass-saturate: 175%;
+    --glass-noise: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+
+    /* Overlay title bar (macOS traffic lights / Windows caption buttons) */
+    --app-titlebar-safe-area: env(titlebar-area-height, 2.75rem);
+    --app-titlebar-offset: calc(var(--app-titlebar-safe-area) + 0.75rem);
   }
 
   * {
@@ -34,59 +49,178 @@
 
   html {
     color-scheme: dark;
+    background: transparent;
   }
 
   body {
-    @apply min-h-screen bg-background text-foreground antialiased;
-    background-image:
-      radial-gradient(
-        circle at top left,
-        hsl(142 71% 45% / 0.08),
-        transparent 28%
-      ),
-      radial-gradient(
-        circle at top right,
-        hsl(142 71% 45% / 0.04),
-        transparent 22%
-      ),
-      linear-gradient(180deg, hsl(0 0% 3%) 0%, hsl(0 0% 6%) 100%);
+    @apply min-h-screen text-foreground antialiased;
+    background: transparent;
   }
 
   #root {
-    @apply min-h-screen w-full;
+    @apply relative min-h-screen w-full;
+    background: transparent;
+  }
+
+  /* Ambient aurora — dá cor ao liquid glass mesmo sobre desktop neutro */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background:
+      radial-gradient(
+        ellipse 70% 55% at 12% 18%,
+        rgba(236, 72, 153, 0.28),
+        transparent 55%
+      ),
+      radial-gradient(
+        ellipse 55% 45% at 88% 22%,
+        rgba(249, 115, 22, 0.22),
+        transparent 50%
+      ),
+      radial-gradient(
+        ellipse 60% 50% at 70% 85%,
+        rgba(99, 102, 241, 0.24),
+        transparent 55%
+      ),
+      radial-gradient(
+        ellipse 50% 40% at 20% 80%,
+        rgba(34, 197, 94, 0.12),
+        transparent 50%
+      ),
+      linear-gradient(
+        165deg,
+        rgba(10, 10, 18, 0.56) 0%,
+        rgba(8, 10, 16, 0.4) 45%,
+        rgba(6, 8, 14, 0.58) 100%
+      );
+  }
+
+  /* Grain global — estabiliza contraste sobre wallpapers busy */
+  #root::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    pointer-events: none;
+    opacity: 0.06;
+    mix-blend-mode: overlay;
+    background-image: var(--glass-noise);
+    background-repeat: repeat;
+    background-size: 180px 180px;
   }
 }
 
 @layer components {
+  .glass-panel,
+  .glass-panel-strong,
+  .glass-inset {
+    position: relative;
+    isolation: isolate;
+  }
+
+  .glass-panel::before,
+  .glass-panel-strong::before,
+  .glass-inset::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    pointer-events: none;
+    z-index: 0;
+    opacity: 0.05;
+    mix-blend-mode: soft-light;
+    background-image: var(--glass-noise);
+    background-repeat: repeat;
+    background-size: 128px 128px;
+  }
+
+  .glass-panel {
+    background: var(--glass-bg);
+    border: 1px solid var(--glass-border);
+    box-shadow:
+      var(--glass-shadow),
+      inset 0 1px 0 0 var(--glass-highlight),
+      inset 0 0 0 0.5px rgba(255, 255, 255, 0.06);
+    backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+    -webkit-backdrop-filter: blur(var(--glass-blur))
+      saturate(var(--glass-saturate));
+  }
+
+  .glass-panel-strong {
+    background: var(--glass-bg-strong);
+    border: 1px solid var(--glass-border-strong);
+    box-shadow:
+      var(--glass-shadow),
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.35),
+      inset 0 0 0 0.5px rgba(255, 255, 255, 0.08);
+    backdrop-filter: blur(48px) saturate(180%);
+    -webkit-backdrop-filter: blur(48px) saturate(180%);
+  }
+
+  .glass-inset {
+    background: rgba(0, 0, 0, 0.28);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.08);
+    backdrop-filter: blur(20px) saturate(150%);
+    -webkit-backdrop-filter: blur(20px) saturate(150%);
+  }
+
   .panel {
-    @apply rounded-2xl border border-border bg-card/90 shadow-sm backdrop-blur-sm;
+    @apply rounded-3xl glass-panel shadow-sm;
   }
 
   .primaryButton {
-    @apply inline-flex items-center justify-center rounded-full border-0 bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground shadow transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-55;
+    @apply inline-flex items-center justify-center rounded-full border-0 bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground shadow transition-colors disabled:cursor-not-allowed disabled:opacity-55;
+  }
+
+  .primaryButton:hover {
+    background: hsl(var(--primary) / 0.9);
   }
 
   .secondaryButton {
-    @apply inline-flex items-center justify-center rounded-full border border-primary/30 bg-transparent px-3.5 py-2.5 text-sm text-foreground transition-colors hover:border-primary/45 hover:bg-primary/10;
+    @apply inline-flex items-center justify-center rounded-full border px-3.5 py-2.5 text-sm text-foreground backdrop-blur-md transition-colors disabled:cursor-not-allowed disabled:opacity-55;
+    border-color: rgba(255, 255, 255, 0.15);
+    background: rgba(255, 255, 255, 0.05);
+  }
+
+  .secondaryButton:hover {
+    border-color: rgba(255, 255, 255, 0.25);
+    background: rgba(255, 255, 255, 0.1);
   }
 
   .tabButton {
-    @apply rounded-full border border-border bg-secondary/60 px-4 py-2 text-sm text-muted-foreground transition-colors hover:border-primary/30 hover:text-foreground;
+    @apply rounded-full border px-4 py-2 text-sm text-muted-foreground backdrop-blur-md transition-colors;
+    border-color: rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.05);
+  }
+
+  .tabButton:hover {
+    border-color: rgba(255, 255, 255, 0.2);
+    @apply text-foreground;
   }
 
   .tabButton-active {
-    @apply border-primary/45 bg-primary/15 text-primary shadow-glow;
+    @apply text-primary shadow-glow;
+    border-color: hsl(var(--primary) / 0.45);
+    background: hsl(var(--primary) / 0.15);
   }
 
   .globalSearchInput {
-    @apply h-11 w-full rounded-2xl border border-input bg-background/80 px-4 text-sm text-foreground shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring;
+    @apply h-11 w-full rounded-2xl border px-4 text-sm text-foreground shadow-sm backdrop-blur-xl transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring;
+    border-color: rgba(255, 255, 255, 0.12);
+    background: rgba(255, 255, 255, 0.05);
   }
 
   .appSelect,
   .shell select:not([data-radix-select-trigger]) {
-    @apply h-10 w-full cursor-pointer appearance-none rounded-xl border border-input bg-background/90 px-3.5 py-2 pr-10 text-sm text-foreground shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50;
+    @apply h-10 w-full cursor-pointer appearance-none rounded-xl border px-3.5 py-2 pr-10 text-sm text-foreground shadow-sm backdrop-blur-xl transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50;
+    border-color: rgba(255, 255, 255, 0.12);
+    background-color: rgba(255, 255, 255, 0.05);
     color-scheme: dark;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2371717a' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23bdbdc5' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
     background-repeat: no-repeat;
     background-position: right 0.875rem center;
     background-size: 1rem;
@@ -95,27 +229,36 @@
   .shell
     .sessionForm
     input:not([type="checkbox"]):not([type="radio"]):not(.flex) {
-    @apply h-10 w-full rounded-2xl border border-input bg-background/80 px-3.5 py-2 text-sm text-foreground shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50;
+    @apply h-10 w-full rounded-2xl border px-3.5 py-2 text-sm text-foreground shadow-sm backdrop-blur-xl transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50;
+    border-color: rgba(255, 255, 255, 0.12);
+    background: rgba(255, 255, 255, 0.05);
   }
 
   .searchResultsPanel {
-    @apply absolute left-0 right-0 top-[calc(100%+8px)] z-20 max-h-[420px] overflow-y-auto rounded-2xl border border-border bg-popover p-3 shadow-xl;
+    @apply absolute left-0 right-0 top-[calc(100%+8px)] z-20 max-h-[420px] overflow-y-auto rounded-2xl p-3 glass-panel-strong;
   }
 
   .app-shell {
-    @apply flex min-h-screen w-full max-w-none;
+    @apply relative flex min-h-screen w-full max-w-none;
   }
 
   .app-sidebar {
-    @apply fixed bottom-0 left-0 right-0 z-40 flex items-center justify-around border-t border-border bg-card/95 px-2 py-2 backdrop-blur-md lg:bottom-auto lg:right-auto lg:top-0 lg:h-screen lg:w-16 lg:flex-col lg:justify-start lg:border-r lg:border-t-0 lg:px-0 lg:py-4;
+    @apply fixed bottom-3 left-3 right-3 z-40 flex items-center justify-around rounded-3xl px-2 py-2 glass-panel-strong lg:bottom-3 lg:left-3 lg:right-auto lg:w-[4.25rem] lg:flex-col lg:justify-start lg:border lg:px-0 lg:pb-3 lg:pt-3;
+  }
+
+  @media (min-width: 1024px) {
+    .app-sidebar {
+      top: var(--app-titlebar-offset);
+      height: calc(100vh - var(--app-titlebar-offset) - 0.75rem);
+    }
   }
 
   .app-sidebar-brand {
-    @apply hidden lg:mb-6 lg:flex lg:h-10 lg:w-10 lg:items-center lg:justify-center lg:overflow-hidden lg:rounded-[10px];
+    @apply hidden lg:mb-5 lg:flex lg:h-10 lg:w-10 lg:items-center lg:justify-center lg:overflow-hidden lg:rounded-2xl;
   }
 
   .app-sidebar-brand-logo {
-    @apply h-10 w-10 rounded-[10px] object-cover;
+    @apply h-10 w-10 rounded-2xl object-cover;
   }
 
   .app-sidebar-brand-label {
@@ -127,11 +270,17 @@
   }
 
   .app-sidebar-nav-item {
-    @apply h-10 w-10 rounded-xl text-muted-foreground hover:bg-accent hover:text-foreground lg:h-11 lg:w-11;
+    @apply h-10 w-10 rounded-2xl text-muted-foreground hover:text-foreground lg:h-11 lg:w-11;
+  }
+
+  .app-sidebar-nav-item:hover {
+    background: rgba(255, 255, 255, 0.1);
   }
 
   .app-sidebar-nav-item-active {
-    @apply border border-primary/45 bg-primary/10 text-primary shadow-glow;
+    @apply border text-primary shadow-glow;
+    border-color: hsl(var(--primary) / 0.4);
+    background: hsl(var(--primary) / 0.15);
   }
 
   .app-sidebar-nav-label {
@@ -139,19 +288,34 @@
   }
 
   .app-sidebar-footer {
-    @apply hidden lg:mt-auto lg:flex lg:w-full lg:justify-center lg:px-2 lg:pb-2;
+    @apply hidden lg:mt-auto lg:flex lg:w-full lg:justify-center lg:px-2 lg:pb-1;
   }
 
   .app-sidebar-org-button {
-    @apply h-10 w-10 rounded-xl p-0;
+    @apply h-10 w-10 rounded-2xl p-0;
+  }
+
+  .app-titlebar-drag {
+    position: fixed;
+    top: 0;
+    right: 0;
+    left: 0;
+    z-index: 50;
+    height: var(--app-titlebar-safe-area);
+    -webkit-app-region: drag;
+    app-region: drag;
+    pointer-events: auto;
   }
 
   .app-main {
-    @apply flex min-h-screen w-full max-w-none flex-col pb-16 lg:ml-16 lg:pb-0;
+    @apply flex min-h-screen w-full max-w-none flex-col pb-24 lg:ml-[5.25rem] lg:pb-0;
+    padding-top: var(--app-titlebar-offset);
   }
 
   .app-topbar {
-    @apply sticky top-0 z-30 flex w-full flex-wrap items-center gap-3 border-b border-border bg-background/80 px-4 py-3 backdrop-blur-md lg:px-8;
+    @apply sticky z-30 mx-3 flex w-auto flex-wrap items-center gap-3 rounded-3xl px-4 py-3 glass-panel max-lg:pl-[4.75rem] lg:mx-4 lg:px-5;
+    top: var(--app-titlebar-offset);
+    margin-top: 0;
   }
 
   .app-topbar-start {
@@ -167,7 +331,9 @@
   }
 
   .app-topbar-focus {
-    @apply flex max-w-full items-center gap-2 rounded-xl border border-primary/25 bg-card/70 px-3 py-1.5;
+    @apply flex max-w-full items-center gap-2 rounded-2xl border px-3 py-1.5 backdrop-blur-md;
+    border-color: hsl(var(--primary) / 0.25);
+    background: hsl(var(--primary) / 0.1);
   }
 
   .app-topbar-focus-title {
@@ -175,8 +341,7 @@
   }
 
   .app-main-content {
-    /* min-w-0 prevents flex overflow; avoid overflow-x-clip (forces y-clip in CSS). */
-    @apply w-full min-w-0 flex-1 px-4 py-5 lg:px-8 lg:py-6;
+    @apply w-full min-w-0 flex-1 px-4 py-5 lg:px-6 lg:py-6;
   }
 
   .view-header {

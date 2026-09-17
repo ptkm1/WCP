@@ -1,14 +1,14 @@
 import {
-  ConfirmDialog,
-  ContextStepsBar,
-  FilterTabs,
-  OrganizationAvatar,
-  PlanStatusBadge,
-  SearchField,
-  SectionTitle,
-  SelectableListItem,
-  StatusAlert,
-  StatusBadge,
+    ConfirmDialog,
+    ContextStepsBar,
+    FilterTabs,
+    OrganizationAvatar,
+    PlanStatusBadge,
+    SearchField,
+    SectionTitle,
+    SelectableListItem,
+    StatusAlert,
+    StatusBadge,
 } from "@/components/app-ui";
 import { AppShell } from "@/components/layout/AppShell";
 import { AppSidebar } from "@/components/layout/AppSidebar";
@@ -28,41 +28,41 @@ import { RepositoryNoteDialog } from "@/components/repos/RepositoryNoteDialog";
 import { TaskDetailPanel } from "@/components/tasks/TaskDetailPanel";
 import { TaskListItem } from "@/components/tasks/TaskListItem";
 import {
-  ContextSwitchDialog,
-  type ContextSwitchOriginDto,
+    ContextSwitchDialog,
+    type ContextSwitchOriginDto,
 } from "@/components/today/ContextSwitchDialog";
 import {
-  ContinueWorkCard,
-  type ContinueWorkDto,
+    ContinueWorkCard,
+    type ContinueWorkDto,
 } from "@/components/today/ContinueWorkCard";
 import { ContinueWorkDialog } from "@/components/today/ContinueWorkDialog";
 import { InboxCard } from "@/components/today/InboxCard";
 import {
-  MultiFocusPromptDialog,
-  type MultiFocusGroupDto,
-  type MultiFocusTaskDraft,
+    MultiFocusPromptDialog,
+    type MultiFocusGroupDto,
+    type MultiFocusTaskDraft,
 } from "@/components/today/MultiFocusPromptDialog";
 import {
-  SessionHandoffDialog,
-  type SessionHandoffSummaryDto,
+    SessionHandoffDialog,
+    type SessionHandoffSummaryDto,
 } from "@/components/today/SessionHandoffDialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
+    Dialog,
+    DialogContent,
+    DialogHeader,
+    DialogTitle,
 } from "@/components/ui/dialog";
 import {
-  FieldCheckbox,
-  FieldSelect,
-  ORG_KIND_OPTIONS,
-  PROVIDER_TYPE_OPTIONS,
-  SessionFieldInput,
-  SessionFieldSelect,
-  SessionFieldTextarea,
+    FieldCheckbox,
+    FieldSelect,
+    ORG_KIND_OPTIONS,
+    PROVIDER_TYPE_OPTIONS,
+    SessionFieldInput,
+    SessionFieldSelect,
+    SessionFieldTextarea,
 } from "@/components/ui/form-fields";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -70,34 +70,35 @@ import { Popover } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ORG_TAB_ICONS } from "@/lib/app-icons";
 import {
-  buildMultiFocusGroupForTask,
-  firstUnsnoozedMultiFocusGroup,
-  snoozeMultiFocusGroup,
+    buildMultiFocusGroupForTask,
+    firstUnsnoozedMultiFocusGroup,
+    snoozeMultiFocusGroup,
 } from "@/lib/multi-focus";
 import { BacklogView, OrganizationsView, ReposView, TodayView } from "@/views";
 import { HistoryView } from "@/views/HistoryView";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
-  buildContextChainLabel,
-  buildWorkContextEntityRefs,
-  listOrganizationContextGaps,
-  validateWorkContextLinks,
-  type PmSyncFilter,
+    buildContextChainLabel,
+    buildWorkContextEntityRefs,
+    describeMergeRequest,
+    listOrganizationContextGaps,
+    validateWorkContextLinks,
+    type PmSyncFilter,
 } from "@wcp/domain";
 import {
-  ArrowRightLeft,
-  Building2,
-  GitBranch,
-  Image,
-  Info,
-  Link2,
-  ListTodo,
-  Plug,
-  Plus,
-  Save,
-  ScanSearch,
-  Trash2,
+    ArrowRightLeft,
+    Building2,
+    GitBranch,
+    Image,
+    Info,
+    Link2,
+    ListTodo,
+    Plug,
+    Plus,
+    Save,
+    ScanSearch,
+    Trash2,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
@@ -520,8 +521,19 @@ interface ArtifactDto {
   artifactType: string;
   title?: string | null;
   url?: string | null;
+  metadataJson?: string | null;
   createdAt: string;
   sourceType?: string;
+}
+
+interface LinkedMergeRequestDto {
+  workItemId: string;
+  id: string;
+  title?: string | null;
+  url?: string | null;
+  artifactType: string;
+  metadataJson?: string | null;
+  createdAt: string;
 }
 
 interface DashboardDto {
@@ -534,6 +546,7 @@ interface DashboardDto {
   recentTaskSessions: SessionLogDto[];
   taskNotes: KnowledgeNoteDto[];
   taskArtifacts: ArtifactDto[];
+  mergeRequests?: LinkedMergeRequestDto[];
   todayPlan: PlanItemDto[];
   recoverableContext: RecoverableContextCandidateDto[];
   guardrail?: RepositoryGuardrailDto | null;
@@ -692,6 +705,29 @@ const QUICK_STATUS_OPTIONS = [
   { value: "blocked", label: "Bloqueada" },
   { value: "done", label: "Concluida" },
 ] as const;
+
+const COMPANY_PROFILE_STORAGE_KEY = "wcp.companyProfileId";
+const ALL_COMPANIES_PROFILE_ID = "all";
+
+function readStoredCompanyProfileId(): string {
+  try {
+    const value = window.localStorage.getItem(COMPANY_PROFILE_STORAGE_KEY);
+    if (value && value.trim()) {
+      return value.trim();
+    }
+  } catch {
+    // ignore storage failures (private mode, etc.)
+  }
+  return ALL_COMPANIES_PROFILE_ID;
+}
+
+function persistCompanyProfileId(organizationId: string) {
+  try {
+    window.localStorage.setItem(COMPANY_PROFILE_STORAGE_KEY, organizationId);
+  } catch {
+    // ignore storage failures (private mode, etc.)
+  }
+}
 
 const BACKLOG_STATUS_FILTERS = [
   { value: "all", label: "Todas" },
@@ -1071,7 +1107,12 @@ export function App() {
   const [taskActionsMenuOpen, setTaskActionsMenuOpen] = useState(false);
   const [backlogSearchQuery, setBacklogSearchQuery] = useState("");
   const [backlogStatusFilter, setBacklogStatusFilter] = useState<string>("all");
-  const [backlogOrgFilter, setBacklogOrgFilter] = useState<string>("all");
+  const [companyProfileId, setCompanyProfileId] = useState<string>(() =>
+    readStoredCompanyProfileId(),
+  );
+  const [backlogOrgFilter, setBacklogOrgFilter] = useState<string>(() =>
+    readStoredCompanyProfileId(),
+  );
   const [backlogSourceFilter, setBacklogSourceFilter] = useState<string>("all");
   const [backlogDeadlineFilter, setBacklogDeadlineFilter] =
     useState<string>("all");
@@ -1119,8 +1160,10 @@ export function App() {
   const [contextSwitchBusy, setContextSwitchBusy] = useState(false);
   const [inboxBusyId, setInboxBusyId] = useState<string | null>(null);
   const [taskActionBusy, setTaskActionBusy] = useState(false);
-  const [selectedOrganizationId, setSelectedOrganizationId] =
-    useState<string>("all");
+  const [selectedOrganizationId, setSelectedOrganizationId] = useState<string>(
+    () => readStoredCompanyProfileId(),
+  );
+  const skipCompanyProfileReloadRef = useRef(true);
   const [contextStep, setContextStep] = useState<number>(1);
   const [preparingContext, setPreparingContext] = useState(false);
   const [selectedRepoId, setSelectedRepoId] = useState<string | null>(null);
@@ -1306,7 +1349,12 @@ export function App() {
     async function load() {
       try {
         const [dashboard, repoList, orgList, projectList] = await Promise.all([
-          invoke<DashboardDto>("load_dashboard_data"),
+          invoke<DashboardDto>("load_dashboard_data", {
+            organizationId:
+              companyProfileId === ALL_COMPANIES_PROFILE_ID
+                ? null
+                : companyProfileId,
+          }),
           invoke<RepositoryListItemDto[]>("list_repositories"),
           invoke<OrganizationListItemDto[]>("list_organizations"),
           invoke<ProjectListItemDto[]>("list_projects"),
@@ -1365,6 +1413,69 @@ export function App() {
       setOrgSetupSelectedId(organizations[0]?.id ?? null);
     }
   }, [organizations, orgSetupSelectedId]);
+
+  useEffect(() => {
+    if (companyProfileId === ALL_COMPANIES_PROFILE_ID) {
+      return;
+    }
+    if (organizations.length === 0) {
+      return;
+    }
+    if (!organizations.some((org) => org.id === companyProfileId)) {
+      setCompanyProfileId(ALL_COMPANIES_PROFILE_ID);
+      setBacklogOrgFilter(ALL_COMPANIES_PROFILE_ID);
+      setSelectedOrganizationId(ALL_COMPANIES_PROFILE_ID);
+      persistCompanyProfileId(ALL_COMPANIES_PROFILE_ID);
+    }
+  }, [organizations, companyProfileId]);
+
+  useEffect(() => {
+    if (skipCompanyProfileReloadRef.current) {
+      skipCompanyProfileReloadRef.current = false;
+      return;
+    }
+
+    let cancelled = false;
+
+    async function reloadForProfile() {
+      try {
+        const dashboard = await invoke<DashboardDto>("load_dashboard_data", {
+          organizationId:
+            companyProfileId === ALL_COMPANIES_PROFILE_ID
+              ? null
+              : companyProfileId,
+        });
+        if (cancelled) {
+          return;
+        }
+        setData(dashboard);
+        setTaskContext({
+          task: dashboard.currentTask,
+          recentTaskSessions: dashboard.recentTaskSessions,
+          taskNotes: dashboard.taskNotes,
+          taskArtifacts: dashboard.taskArtifacts,
+          recoverableContext: dashboard.recoverableContext,
+          dependencies: [],
+        });
+        setSelectedTaskId(
+          dashboard.currentTask?.id ?? dashboard.backlog[0]?.id ?? null,
+        );
+        setError(null);
+      } catch (loadError) {
+        if (!cancelled) {
+          setError(
+            extractErrorMessage(loadError, "Falha ao carregar dashboard"),
+          );
+        }
+      }
+    }
+
+    void reloadForProfile();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [companyProfileId]);
 
   const orgEnvSyncRef = useRef<string | null>(null);
   const orgIdentityContextRef = useRef<string | null>(null);
@@ -2344,6 +2455,15 @@ export function App() {
     () => new Map(organizations.map((org) => [org.id, org.name])),
     [organizations],
   );
+  const mergeRequestsByTaskId = useMemo(() => {
+    const grouped = new Map<string, LinkedMergeRequestDto[]>();
+    for (const mergeRequest of data?.mergeRequests ?? []) {
+      const current = grouped.get(mergeRequest.workItemId) ?? [];
+      current.push(mergeRequest);
+      grouped.set(mergeRequest.workItemId, current);
+    }
+    return grouped;
+  }, [data?.mergeRequests]);
   const filteredBacklog = useMemo(() => {
     let items = data?.backlog ?? [];
 
@@ -2386,14 +2506,26 @@ export function App() {
 
     const query = backlogSearchQuery.trim().toLowerCase();
     if (query) {
-      items = items.filter(
-        (item) =>
+      items = items.filter((item) => {
+        const mergeRequests = mergeRequestsByTaskId.get(item.id) ?? [];
+        return (
           item.title.toLowerCase().includes(query) ||
           item.description?.toLowerCase().includes(query) ||
           item.resumeSummary?.toLowerCase().includes(query) ||
           item.blockedReason?.toLowerCase().includes(query) ||
-          item.externalKey?.toLowerCase().includes(query),
-      );
+          item.externalKey?.toLowerCase().includes(query) ||
+          mergeRequests.some((mergeRequest) => {
+            const info = describeMergeRequest(mergeRequest);
+            return (
+              mergeRequest.title?.toLowerCase().includes(query) ||
+              mergeRequest.url?.toLowerCase().includes(query) ||
+              info?.repo.toLowerCase().includes(query) ||
+              info?.number.includes(query) ||
+              info?.ref.toLowerCase().includes(query)
+            );
+          })
+        );
+      });
     }
 
     return [...items].sort((left, right) => {
@@ -2418,6 +2550,7 @@ export function App() {
     backlogSourceFilter,
     backlogStatusFilter,
     data?.backlog,
+    mergeRequestsByTaskId,
     showArchivedBacklog,
     showDismissedBacklog,
   ]);
@@ -3011,6 +3144,38 @@ export function App() {
     setHookResult(null);
   }
 
+  function applyCompanyProfile(organizationId: string) {
+    const nextId = organizationId.trim() || ALL_COMPANIES_PROFILE_ID;
+    if (nextId === companyProfileId) {
+      setBacklogOrgFilter(nextId);
+      setSelectedOrganizationId(nextId);
+      return;
+    }
+    setCompanyProfileId(nextId);
+    setBacklogOrgFilter(nextId);
+    setSelectedOrganizationId(nextId);
+    persistCompanyProfileId(nextId);
+    if (nextId !== ALL_COMPANIES_PROFILE_ID) {
+      applyOrganizationChange(nextId);
+    } else {
+      setContextStep(1);
+      setSelectedRepoId(null);
+      setSelectedGuardrail(null);
+      setHookStatus(null);
+      setRepoMemory(null);
+      setSelectedRepoBranch(null);
+      setApplyResult(null);
+      setHookResult(null);
+    }
+  }
+
+  function handleManageCompanyProfile(organizationId: string | null) {
+    if (organizationId) {
+      setOrgSetupSelectedId(organizationId);
+    }
+    switchActiveView("organizations");
+  }
+
   function handleOrganizationChange(orgId: string) {
     if (orgId === selectedOrganizationId) {
       return;
@@ -3489,11 +3654,13 @@ export function App() {
 
           const nextOrgId = orgList[0]?.id ?? null;
           setOrgSetupSelectedId(nextOrgId);
-          if (
-            selectedOrganizationId !== "all" &&
+          if (companyProfileId === deletedOrganizationId) {
+            applyCompanyProfile(nextOrgId ?? ALL_COMPANIES_PROFILE_ID);
+          } else if (
+            selectedOrganizationId !== ALL_COMPANIES_PROFILE_ID &&
             selectedOrganizationId === deletedOrganizationId
           ) {
-            setSelectedOrganizationId(nextOrgId ?? "all");
+            setSelectedOrganizationId(nextOrgId ?? ALL_COMPANIES_PROFILE_ID);
           }
 
           setOrgSetupSuccess(`Empresa "${organizationName}" excluida.`);
@@ -4410,7 +4577,12 @@ export function App() {
         });
       }, 120);
 
-      const refreshed = await invoke<DashboardDto>("load_dashboard_data");
+      const refreshed = await invoke<DashboardDto>("load_dashboard_data", {
+        organizationId:
+          companyProfileId === ALL_COMPANIES_PROFILE_ID
+            ? null
+            : companyProfileId,
+      });
       setData(refreshed);
       promptMultiFocusForTask(task, refreshed.backlog);
     } catch (sessionError) {
@@ -5017,6 +5189,7 @@ export function App() {
   async function handleAttachArtifact(
     title: string,
     url: string,
+    options?: { role?: string | null; artifactType?: string },
   ): Promise<boolean> {
     if (!selectedTaskId || !url.trim()) {
       return false;
@@ -5029,17 +5202,36 @@ export function App() {
         {
           workItemId: selectedTaskId,
           repositoryId: selectedRepoId,
-          artifactType: "link",
+          artifactType: options?.artifactType ?? "link",
           title: title || null,
           url,
+          role: options?.role ?? null,
         },
       );
+
+      const linked: LinkedMergeRequestDto = {
+        workItemId: selectedTaskId,
+        id: response.artifact.id,
+        title: response.artifact.title,
+        url: response.artifact.url,
+        artifactType: response.artifact.artifactType,
+        metadataJson: response.artifact.metadataJson,
+        createdAt: response.artifact.createdAt,
+      };
 
       setData((current) =>
         current
           ? {
               ...current,
               taskArtifacts: [response.artifact, ...current.taskArtifacts],
+              mergeRequests: describeMergeRequest(response.artifact)
+                ? [
+                    linked,
+                    ...(current.mergeRequests ?? []).filter(
+                      (item) => item.id !== linked.id,
+                    ),
+                  ]
+                : current.mergeRequests,
             }
           : current,
       );
@@ -5061,8 +5253,64 @@ export function App() {
     }
   }
 
+  async function handleAttachMergeRequest(
+    title: string,
+    url: string,
+    role: string | null,
+  ): Promise<boolean> {
+    return handleAttachArtifact(title, url, {
+      artifactType: "pr",
+      role,
+    });
+  }
+
+  async function handleDetachArtifact(artifactId: string) {
+    if (!selectedTaskId || contextBusy) {
+      return;
+    }
+
+    try {
+      setContextBusy(true);
+      await invoke("detach_task_artifact", {
+        workItemId: selectedTaskId,
+        artifactId,
+      });
+      setData((current) =>
+        current
+          ? {
+              ...current,
+              taskArtifacts: current.taskArtifacts.filter(
+                (item) => item.id !== artifactId,
+              ),
+              mergeRequests: (current.mergeRequests ?? []).filter(
+                (item) => item.id !== artifactId,
+              ),
+            }
+          : current,
+      );
+      setTaskContext((current) =>
+        current
+          ? {
+              ...current,
+              taskArtifacts: current.taskArtifacts.filter(
+                (item) => item.id !== artifactId,
+              ),
+            }
+          : current,
+      );
+      await refreshHistoryIfNeeded();
+    } catch (contextError) {
+      setError(extractErrorMessage(contextError, "Falha ao remover link"));
+    } finally {
+      setContextBusy(false);
+    }
+  }
+
   async function refreshDashboard(nextTaskId?: string | null) {
-    const dashboard = await invoke<DashboardDto>("load_dashboard_data");
+    const dashboard = await invoke<DashboardDto>("load_dashboard_data", {
+      organizationId:
+        companyProfileId === ALL_COMPANIES_PROFILE_ID ? null : companyProfileId,
+    });
     setData(dashboard);
 
     const resolvedTaskId =
@@ -5682,12 +5930,6 @@ export function App() {
             ? "Historico"
             : "Projetos";
 
-  const sidebarOrganization =
-    organizations.find((org) => org.id === orgSetupSelectedId) ??
-    organizations.find((org) => org.id === headerFocusTask?.organizationId) ??
-    organizations[0] ??
-    null;
-
   const topBarSearchGroups = groupedSearchResults.map((group) => ({
     ...group,
     items: group.items.map((item) => ({
@@ -5710,21 +5952,15 @@ export function App() {
             value={activeView}
             onChange={(view) => switchActiveView(view)}
             todayBadgeCount={data?.inbox?.length ?? 0}
-            organizationName={sidebarOrganization?.name}
-            organizationKind={sidebarOrganization?.kind}
-            organizationLogoUrl={
-              sidebarOrganization
-                ? getOrganizationLogoUrl(sidebarOrganization.id)
-                : null
-            }
-            onOrganizationClick={
-              sidebarOrganization
-                ? () => {
-                    setOrgSetupSelectedId(sidebarOrganization.id);
-                    switchActiveView("organizations");
-                  }
-                : undefined
-            }
+            companyProfileId={companyProfileId}
+            organizations={organizations.map((organization) => ({
+              id: organization.id,
+              name: organization.name,
+              kind: organization.kind,
+              logoUrl: getOrganizationLogoUrl(organization.id),
+            }))}
+            onCompanyProfileChange={applyCompanyProfile}
+            onManageOrganization={handleManageCompanyProfile}
           />
         }
         topBar={
@@ -6391,7 +6627,7 @@ export function App() {
                         value={backlogOrgFilter}
                         onValueChange={setBacklogOrgFilter}
                         options={[
-                          { value: "all", label: "Todas" },
+                          { value: "all", label: "Todas as empresas" },
                           ...organizations.map((organization) => ({
                             value: organization.id,
                             label: organization.name,
@@ -6478,6 +6714,7 @@ export function App() {
                       formatTaskStatus={formatTaskStatus}
                       formatPmProviderLabel={formatPmProviderLabel}
                       formatDateTime={formatDateTime}
+                      mergeRequests={mergeRequestsByTaskId.get(item.id)}
                     />
                   ))}
                 </div>
@@ -6616,6 +6853,8 @@ export function App() {
                     onClearDependencyError={() => setDependencyError(null)}
                     onSaveNote={handleSaveTaskNote}
                     onAttachArtifact={handleAttachArtifact}
+                    onAttachMergeRequest={handleAttachMergeRequest}
+                    onDetachArtifact={handleDetachArtifact}
                     onResumeSession={handleResumeFromSession}
                     taskFormPanel={
                       <TaskFormPanel
@@ -10029,10 +10268,11 @@ function buildTaskTimelineEntries(
   }
 
   for (const artifact of taskContext?.taskArtifacts ?? []) {
+    const mergeRequest = describeMergeRequest(artifact);
     entries.push({
       id: `artifact-${artifact.id}`,
       kind: "artifact",
-      title: artifact.title ?? artifact.artifactType,
+      title: mergeRequest?.title ?? artifact.title ?? artifact.artifactType,
       detail: artifact.url ?? artifact.artifactType,
       createdAt: artifact.createdAt,
     });

@@ -704,19 +704,114 @@ pub fn fetch_artifacts_for_work_item(
     let rows = sqlite_json(
         db_path,
         &format!(
-            "SELECT a.id, a.repository_id, a.type, a.title, a.url, a.created_at, a.source_type
+            "SELECT a.id, a.repository_id, a.type, a.title, a.url, a.metadata_json, a.created_at, a.source_type
              FROM artifacts a
              INNER JOIN entity_links l ON l.to_entity_id = a.id
              WHERE l.from_entity_type = 'work_item'
                AND l.from_entity_id = '{}'
                AND l.to_entity_type = 'artifact'
              ORDER BY a.created_at DESC
-             LIMIT 5;",
+             LIMIT 50;",
             escape_sql(work_item_id)
         ),
     )?;
 
     Ok(rows.iter().map(map_artifact_row).collect())
+}
+
+pub fn fetch_linked_merge_requests(
+    db_path: &Path,
+) -> Result<Vec<crate::dto::LinkedMergeRequestDto>, String> {
+    let rows = sqlite_json(
+        db_path,
+        "SELECT l.from_entity_id AS work_item_id, a.id, a.type, a.title, a.url, a.metadata_json, a.created_at
+         FROM artifacts a
+         INNER JOIN entity_links l ON l.to_entity_id = a.id
+         WHERE l.from_entity_type = 'work_item'
+           AND l.to_entity_type = 'artifact'
+           AND (
+             a.type = 'pr'
+             OR lower(COALESCE(a.url, '')) LIKE '%/merge_requests/%'
+             OR lower(COALESCE(a.url, '')) LIKE '%/pull/%'
+             OR lower(COALESCE(a.url, '')) LIKE '%/pulls/%'
+             OR lower(COALESCE(a.url, '')) LIKE '%/pull-requests/%'
+             OR lower(COALESCE(a.url, '')) LIKE '%/pullrequest/%'
+           )
+         ORDER BY a.created_at DESC;",
+    )?;
+
+    Ok(rows
+        .iter()
+        .map(|row| crate::dto::LinkedMergeRequestDto {
+            work_item_id: get_string(row, "work_item_id").unwrap_or_default(),
+            id: get_string(row, "id").unwrap_or_default(),
+            title: get_optional_string(row, "title"),
+            url: get_optional_string(row, "url"),
+            artifact_type: get_string(row, "type").unwrap_or_default(),
+            metadata_json: get_optional_string(row, "metadata_json"),
+            created_at: get_string(row, "created_at").unwrap_or_default(),
+        })
+        .collect())
+}
+
+pub fn detach_work_item_artifact(
+    db_path: &Path,
+    work_item_id: &str,
+    artifact_id: &str,
+) -> Result<(), String> {
+    let links = sqlite_json(
+        db_path,
+        &format!(
+            "SELECT id FROM entity_links
+             WHERE from_entity_type = 'work_item'
+               AND from_entity_id = '{}'
+               AND to_entity_type = 'artifact'
+               AND to_entity_id = '{}'
+             LIMIT 1;",
+            escape_sql(work_item_id),
+            escape_sql(artifact_id)
+        ),
+    )?;
+
+    if links.is_empty() {
+        return Err("Este link nao pertence a esta tarefa.".to_string());
+    }
+
+    sqlite_exec(
+        db_path,
+        &format!(
+            "DELETE FROM entity_links
+             WHERE from_entity_type = 'work_item'
+               AND from_entity_id = '{}'
+               AND to_entity_type = 'artifact'
+               AND to_entity_id = '{}';",
+            escape_sql(work_item_id),
+            escape_sql(artifact_id)
+        ),
+    )?;
+
+    let remaining = sqlite_json(
+        db_path,
+        &format!(
+            "SELECT id FROM entity_links
+             WHERE to_entity_type = 'artifact'
+               AND to_entity_id = '{}'
+             LIMIT 1;",
+            escape_sql(artifact_id)
+        ),
+    )?;
+
+    if remaining.is_empty() {
+        sqlite_exec(
+            db_path,
+            &format!(
+                "DELETE FROM artifacts WHERE id = '{}';",
+                escape_sql(artifact_id)
+            ),
+        )?;
+    }
+
+    Ok(())
 }
 
 pub fn fetch_note_by_id(db_path: &Path, note_id: &str) -> Result<Option<KnowledgeNoteDto>, String> {
@@ -741,7 +836,7 @@ pub fn fetch_artifact_by_id(
     let rows = sqlite_json(
         db_path,
         &format!(
-            "SELECT id, repository_id, type, title, url, created_at, source_type
+            "SELECT id, repository_id, type, title, url, metadata_json, created_at, source_type
              FROM artifacts
              WHERE id = '{}'
              LIMIT 1;",
@@ -963,6 +1058,7 @@ fn map_artifact_row(row: &Value) -> ArtifactDto {
         artifact_type: get_string(row, "type").unwrap_or_default(),
         title: get_optional_string(row, "title"),
         url: get_optional_string(row, "url"),
+        metadata_json: get_optional_string(row, "metadata_json"),
         created_at: get_string(row, "created_at").unwrap_or_default(),
         source_type: get_string(row, "source_type").unwrap_or_else(|| "manual".to_string()),
     }

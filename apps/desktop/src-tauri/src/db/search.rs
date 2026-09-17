@@ -62,6 +62,7 @@ pub fn search_local_history(db_path: &Path, query: &str) -> Result<Vec<SearchRes
                AND l.from_entity_type = 'work_item'
               WHERE lower(COALESCE(a.title, '')) LIKE '{pattern}' ESCAPE '\\'
                  OR lower(COALESCE(a.url, '')) LIKE '{pattern}' ESCAPE '\\'
+                 OR lower(COALESCE(a.metadata_json, '')) LIKE '{pattern}' ESCAPE '\\'
                  OR lower(a.type) LIKE '{pattern}' ESCAPE '\\'
 
               UNION ALL

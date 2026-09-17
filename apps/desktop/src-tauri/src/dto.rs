@@ -277,6 +277,7 @@ pub struct DashboardDto {
     pub recent_task_sessions: Vec<SessionLogDto>,
     pub task_notes: Vec<KnowledgeNoteDto>,
     pub task_artifacts: Vec<ArtifactDto>,
+    pub merge_requests: Vec<LinkedMergeRequestDto>,
     pub today_plan: Vec<PlanItemDto>,
     pub recoverable_context: Vec<RecoverableContextCandidateDto>,
     pub guardrail: Option<RepositoryGuardrailDto>,
@@ -432,8 +433,21 @@ pub struct ArtifactDto {
     pub artifact_type: String,
     pub title: Option<String>,
     pub url: Option<String>,
+    pub metadata_json: Option<String>,
     pub created_at: String,
     pub source_type: String,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LinkedMergeRequestDto {
+    pub work_item_id: String,
+    pub id: String,
+    pub title: Option<String>,
+    pub url: Option<String>,
+    pub artifact_type: String,
+    pub metadata_json: Option<String>,
+    pub created_at: String,
 }
 
 #[derive(Serialize)]
@@ -491,6 +505,12 @@ pub struct SaveNoteResultDto {
 #[serde(rename_all = "camelCase")]
 pub struct AttachArtifactResultDto {
     pub artifact: ArtifactDto,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DetachArtifactResultDto {
+    pub artifact_id: String,
 }
 
 #[derive(Serialize)]

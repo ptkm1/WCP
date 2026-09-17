@@ -90,7 +90,7 @@ export function DropdownMenu({
           ref={contentRef}
           data-floating-menu=""
           className={cn(
-            "absolute top-[calc(100%+6px)] z-[250] min-w-[180px] max-w-[min(280px,calc(100vw-24px))] overflow-hidden rounded-xl border border-border bg-popover py-1 shadow-xl",
+            "absolute top-[calc(100%+6px)] z-[250] min-w-[180px] max-w-[min(280px,calc(100vw-24px))] overflow-hidden rounded-2xl py-1 glass-panel-strong",
             align === "end" ? "right-0" : "left-0",
           )}
           role="menu"
@@ -102,7 +102,7 @@ export function DropdownMenu({
               role="menuitem"
               disabled={item.disabled}
               className={cn(
-                "flex w-full items-center px-3 py-2 text-left text-sm transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50",
+                "flex w-full items-center px-3 py-2 text-left text-sm transition-colors hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50",
                 item.destructive && "text-destructive hover:bg-destructive/10",
               )}
               onClick={() => {

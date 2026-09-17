@@ -2,8 +2,17 @@ import { OrganizationBadge, StatusBadge } from "@/components/app-ui";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { describeMergeRequest } from "@wcp/domain";
 import type { ReactNode } from "react";
 const TASK_PREVIEW_MAX = 64;
+
+export type TaskListMergeRequest = {
+  id: string;
+  title?: string | null;
+  url?: string | null;
+  artifactType?: string | null;
+  metadataJson?: string | null;
+};
 
 export type TaskListItemData = {
   id: string;
@@ -71,6 +80,7 @@ export function TaskListItem({
   formatTaskStatus,
   formatPmProviderLabel,
   formatDateTime,
+  mergeRequests,
 }: {
   task: TaskListItemData;
   active?: boolean;
@@ -84,6 +94,7 @@ export function TaskListItem({
   formatTaskStatus: (status: string) => string;
   formatPmProviderLabel: (provider: string) => string;
   formatDateTime: (value: string) => string;
+  mergeRequests?: TaskListMergeRequest[];
 }) {
   const preview = buildTaskListPreview(task, formatDateTime);
   const chips = buildTaskListChips({
@@ -95,6 +106,7 @@ export function TaskListItem({
     isRelated,
     formatPmProviderLabel,
     formatDateTime,
+    mergeRequests,
   });
 
   return (
@@ -102,7 +114,7 @@ export function TaskListItem({
       type="button"
       variant="ghost"
       className={cn(
-        "task-list-item h-auto w-full min-w-0 flex-col items-stretch gap-2 rounded-xl border px-3 py-2.5 text-left font-normal hover:bg-accent/40",
+        "task-list-item h-auto w-full min-w-0 flex-col items-stretch gap-2 rounded-2xl border border-white/10 bg-white/[0.04] px-3 py-2.5 text-left font-normal backdrop-blur-md hover:bg-white/10",
         active &&
           "border-primary/45 bg-primary/10 shadow-glow hover:bg-primary/10",
         linked && !active && "border-dashed border-primary/25",
@@ -192,6 +204,7 @@ function buildTaskListChips({
   isRelated,
   formatPmProviderLabel,
   formatDateTime,
+  mergeRequests = [],
 }: {
   task: TaskListItemData;
   organizationName?: string | null;
@@ -201,9 +214,10 @@ function buildTaskListChips({
   isRelated?: boolean;
   formatPmProviderLabel: (provider: string) => string;
   formatDateTime: (value: string) => string;
+  mergeRequests?: TaskListMergeRequest[];
 }): TaskListChip[] {
   const chips: TaskListChip[] = [];
-  const maxChips = 3;
+  const maxChips = mergeRequests.length > 0 ? 4 : 3;
 
   if (organizationName) {
     chips.push({
@@ -270,6 +284,29 @@ function buildTaskListChips({
       node: (
         <Badge variant="outline" className="px-1.5 py-0 text-[10px]">
           Relacionada
+        </Badge>
+      ),
+    });
+  }
+
+  if (mergeRequests.length === 1) {
+    const info = describeMergeRequest(mergeRequests[0]);
+    chips.push({
+      key: "mr",
+      node: (
+        <Badge variant="outline" className="px-1.5 py-0 text-[10px]">
+          {info?.roleLabel
+            ? `${info.roleLabel} ${info.ref}`
+            : (info?.ref ?? "MR")}
+        </Badge>
+      ),
+    });
+  } else if (mergeRequests.length > 1) {
+    chips.push({
+      key: "mrs",
+      node: (
+        <Badge variant="outline" className="px-1.5 py-0 text-[10px]">
+          {mergeRequests.length} MRs
         </Badge>
       ),
     });

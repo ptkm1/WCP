@@ -14,7 +14,8 @@ use commands::{
     attach_task_artifact, commit_today_plan_command, create_organization, create_project,
     create_repository, create_work_item, create_work_item_dependency, delete_integration_connection,
     delete_organization, delete_project, delete_repository, delete_work_item_dependency,
-    accept_inbox_work_item, dismiss_work_item_command, duplicate_work_item, end_session,
+    accept_inbox_work_item, detach_task_artifact, dismiss_work_item_command, duplicate_work_item,
+    end_session,
     fix_repository_remote_ssh_alias, get_context_switch_origin, get_deadline_alerts,
     get_organization_continue_work, get_repository_branch, get_repository_guardrail,
     get_repository_hook_status, get_repository_memory, get_session_handoff_summary, get_task_context,
@@ -32,10 +33,63 @@ use commands::{
     update_work_item,
 };
 
+fn apply_window_glass(window: &tauri::WebviewWindow) {
+    #[cfg(target_os = "macos")]
+    {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+        use window_vibrancy::{
+            apply_liquid_glass, apply_vibrancy, LiquidGlassOptions, NSGlassEffectViewStyle,
+            NSVisualEffectMaterial,
+        };
+
+        let liquid_glass_ok = Arc::new(AtomicBool::new(false));
+        let liquid_glass_flag = Arc::clone(&liquid_glass_ok);
+        let window_for_glass = window.clone();
+        let _ = window.with_webview(move |webview| {
+            use objc2_web_kit::WKWebView;
+
+            // Safety: pointer comes from Tauri's WKWebView handle for this window.
+            let wk_webview: &WKWebView = unsafe { &*webview.inner().cast() };
+            let options = LiquidGlassOptions::new(NSGlassEffectViewStyle::Clear)
+                .radius(28.0)
+                .opaque(false)
+                .content_view(wk_webview);
+
+            if apply_liquid_glass(&window_for_glass, options).is_ok() {
+                liquid_glass_flag.store(true, Ordering::SeqCst);
+            }
+        });
+
+        if !liquid_glass_ok.load(Ordering::SeqCst) {
+            let _ = apply_vibrancy(window, NSVisualEffectMaterial::HudWindow, None, Some(18.0));
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        use window_vibrancy::apply_acrylic;
+        let _ = apply_acrylic(window, Some((12, 12, 16, 180)));
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        let _ = window;
+    }
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
+        .setup(|app| {
+            use tauri::Manager;
+
+            if let Some(window) = app.get_webview_window("main") {
+                apply_window_glass(&window);
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             load_dashboard_data,
             list_organizations,
@@ -80,6 +134,7 @@ fn main() {
             get_organization_continue_work,
             save_task_note,
             attach_task_artifact,
+            detach_task_artifact,
             save_repository_note,
             create_work_item_dependency,
             delete_organization,
