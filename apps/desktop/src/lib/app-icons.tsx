@@ -24,6 +24,7 @@ import {
   Sparkles,
   StickyNote,
   UserCog,
+  Wrench,
   type LucideIcon,
 } from "lucide-react";
 
@@ -32,7 +33,8 @@ export type MainView =
   | "backlog"
   | "organizations"
   | "repos"
-  | "history";
+  | "history"
+  | "machine-setup";
 
 export const MAIN_VIEW_ICONS: Record<MainView, LucideIcon> = {
   today: Sparkles,
@@ -40,6 +42,7 @@ export const MAIN_VIEW_ICONS: Record<MainView, LucideIcon> = {
   organizations: Building2,
   repos: FolderGit2,
   history: History,
+  "machine-setup": Wrench,
 };
 
 export const CONTEXT_STEP_ICONS: Record<number, LucideIcon> = {

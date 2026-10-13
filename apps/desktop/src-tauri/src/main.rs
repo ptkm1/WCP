@@ -7,30 +7,30 @@ mod dto;
 mod git;
 mod hooks;
 mod integrations;
+mod machine_setup;
 mod util;
 
 use commands::{
-    apply_repository_full_context, apply_repository_identity, apply_work_item_context,
-    attach_task_artifact, commit_today_plan_command, create_organization, create_project,
-    create_repository, create_work_item, create_work_item_dependency, delete_integration_connection,
-    delete_organization, delete_project, delete_repository, delete_work_item_dependency,
-    accept_inbox_work_item, detach_task_artifact, dismiss_work_item_command, duplicate_work_item,
-    end_session,
-    fix_repository_remote_ssh_alias, get_context_switch_origin, get_deadline_alerts,
-    get_organization_continue_work, get_repository_branch, get_repository_guardrail,
-    get_repository_hook_status, get_repository_memory, get_session_handoff_summary, get_task_context,
-    import_organization_identity_from_repository, inspect_local_repository_path,
-    install_repository_pre_push_hook, list_clickup_teams, list_context_history,
-    list_inbox_work_items, list_integration_connections, list_organizations,
+    accept_inbox_work_item, apply_repository_full_context, apply_repository_identity,
+    apply_work_item_context, attach_task_artifact, commit_today_plan_command, create_organization,
+    create_project, create_repository, create_work_item, create_work_item_dependency,
+    delete_integration_connection, delete_organization, delete_project, delete_repository,
+    delete_work_item_dependency, detach_task_artifact, dismiss_work_item_command,
+    duplicate_work_item, end_session, fix_repository_remote_ssh_alias, get_context_switch_origin,
+    get_deadline_alerts, get_organization_continue_work, get_repository_branch,
+    get_repository_guardrail, get_repository_hook_status, get_repository_memory,
+    get_session_handoff_summary, get_task_context, import_organization_identity_from_repository,
+    inspect_local_repository_path, install_repository_pre_push_hook, list_clickup_teams,
+    list_context_history, list_inbox_work_items, list_integration_connections, list_organizations,
     list_pm_external_projects, list_pm_project_mappings_command, list_projects, list_repositories,
-    list_ssh_config_hosts,
-    load_dashboard_data, notify_deadline_alerts, pick_local_folder, read_organization_logo,
+    list_ssh_config_hosts, load_dashboard_data, machine_setup_export_script, machine_setup_probe,
+    machine_setup_run, notify_deadline_alerts, pick_local_folder, read_organization_logo,
     remove_organization_logo, remove_repository_pre_push_hook, resolve_work_context,
-    restore_dismissed_work_item_command, save_integration_connection, save_integration_sync_filter, save_pm_project_mapping, save_repository_note, save_task_note,
-    search_local_history, start_session, sync_organization_pm_tasks_command,
-    test_integration_connection, update_organization, update_organization_environment,
-    update_organization_logo, update_project, update_repository_context, update_repository_local_path,
-    update_work_item,
+    restore_dismissed_work_item_command, save_integration_connection, save_integration_sync_filter,
+    save_pm_project_mapping, save_repository_note, save_task_note, search_local_history,
+    start_session, sync_organization_pm_tasks_command, test_integration_connection,
+    update_organization, update_organization_environment, update_organization_logo, update_project,
+    update_repository_context, update_repository_local_path, update_work_item,
 };
 
 fn apply_window_glass(window: &tauri::WebviewWindow) {
@@ -144,6 +144,9 @@ fn main() {
             search_local_history,
             list_context_history,
             list_ssh_config_hosts,
+            machine_setup_probe,
+            machine_setup_run,
+            machine_setup_export_script,
             list_integration_connections,
             save_integration_connection,
             save_integration_sync_filter,

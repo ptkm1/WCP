@@ -4,6 +4,7 @@ mod entities;
 mod git;
 mod history;
 mod integrations;
+mod machine_setup;
 mod organization;
 mod repository;
 mod ssh;
@@ -22,6 +23,9 @@ pub use integrations::{
     list_integration_connections, list_pm_external_projects, list_pm_project_mappings_command,
     notify_deadline_alerts, save_integration_connection, save_integration_sync_filter,
     save_pm_project_mapping, sync_organization_pm_tasks_command, test_integration_connection,
+};
+pub use machine_setup::{
+    machine_setup_export_script, machine_setup_probe, machine_setup_run,
 };
 pub use ssh::list_ssh_config_hosts;
 pub use history::{list_context_history, search_local_history};

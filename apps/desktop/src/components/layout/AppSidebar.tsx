@@ -2,9 +2,20 @@ import { OrganizationAvatar } from "@/components/app-ui";
 import { Button } from "@/components/ui/button";
 import { Popover } from "@/components/ui/popover";
 import { MAIN_VIEW_ICONS, type MainView } from "@/lib/app-icons";
+import {
+  APP_THEMES,
+  type AppThemeId,
+} from "@/lib/app-theme";
 import { cn } from "@/lib/utils";
 import { Building2, Check, Settings2 } from "lucide-react";
 import { useState } from "react";
+
+const THEME_SWATCHES: Record<AppThemeId, string> = {
+  aurora:
+    "linear-gradient(135deg, rgba(236, 72, 153, 0.95) 0%, rgba(99, 102, 241, 0.95) 55%, rgba(34, 197, 94, 0.85) 100%)",
+  verde:
+    "linear-gradient(135deg, rgba(16, 185, 129, 0.95) 0%, rgba(34, 197, 94, 0.95) 55%, rgba(74, 222, 128, 0.85) 100%)",
+};
 
 const NAV_ITEMS: Array<{ view: MainView; label: string }> = [
   { view: "today", label: "Hoje" },
@@ -12,8 +23,8 @@ const NAV_ITEMS: Array<{ view: MainView; label: string }> = [
   { view: "organizations", label: "Empresa" },
   { view: "repos", label: "Projetos" },
   { view: "history", label: "Historico" },
+  { view: "machine-setup", label: "Setup" },
 ];
-
 export type CompanyProfileOption = {
   id: string;
   name: string;
@@ -32,6 +43,8 @@ export function AppSidebar({
   organizations = [],
   onCompanyProfileChange,
   onManageOrganization,
+  themeId = "aurora",
+  onThemeChange,
 }: {
   value: MainView;
   onChange: (view: MainView) => void;
@@ -40,6 +53,8 @@ export function AppSidebar({
   organizations?: CompanyProfileOption[];
   onCompanyProfileChange?: (organizationId: string) => void;
   onManageOrganization?: (organizationId: string | null) => void;
+  themeId?: AppThemeId;
+  onThemeChange?: (themeId: AppThemeId) => void;
 }) {
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
 
@@ -220,6 +235,51 @@ export function AppSidebar({
                     <Settings2 className="h-4 w-4 shrink-0" aria-hidden />
                     <span>Gerenciar empresa</span>
                   </button>
+                </>
+              ) : null}
+
+              {onThemeChange ? (
+                <>
+                  <div className="my-1 border-t border-border" />
+                  <div className="px-2 py-1.5">
+                    <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                      Tema do fundo
+                    </p>
+                    <div
+                      className="mt-2 grid grid-cols-2 gap-1.5"
+                      role="radiogroup"
+                      aria-label="Tema do fundo"
+                    >
+                      {APP_THEMES.map((theme) => {
+                        const selected = themeId === theme.id;
+                        return (
+                          <button
+                            key={theme.id}
+                            type="button"
+                            role="radio"
+                            aria-checked={selected}
+                            title={theme.hint}
+                            className={cn(
+                              "flex items-center gap-2 rounded-xl border px-2 py-2 text-left text-xs transition-colors",
+                              selected
+                                ? "border-primary bg-primary/15 text-foreground"
+                                : "border-border bg-background/40 text-muted-foreground hover:bg-accent hover:text-foreground",
+                            )}
+                            onClick={() => onThemeChange(theme.id)}
+                          >
+                            <span
+                              className="h-5 w-5 shrink-0 rounded-full border border-white/20 shadow-sm"
+                              style={{ background: THEME_SWATCHES[theme.id] }}
+                              aria-hidden
+                            />
+                            <span className="min-w-0 truncate font-medium">
+                              {theme.label}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
                 </>
               ) : null}
             </div>

@@ -68,13 +68,25 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Popover } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+    applyAppTheme,
+    persistAppThemeId,
+    readStoredAppThemeId,
+    type AppThemeId,
+} from "@/lib/app-theme";
 import { ORG_TAB_ICONS } from "@/lib/app-icons";
 import {
     buildMultiFocusGroupForTask,
     firstUnsnoozedMultiFocusGroup,
     snoozeMultiFocusGroup,
 } from "@/lib/multi-focus";
-import { BacklogView, OrganizationsView, ReposView, TodayView } from "@/views";
+import {
+    BacklogView,
+    MachineSetupView,
+    OrganizationsView,
+    ReposView,
+    TodayView,
+} from "@/views";
 import { HistoryView } from "@/views/HistoryView";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -670,7 +682,13 @@ interface ContextEventDto {
   organizationName?: string | null;
 }
 
-type DesktopView = "today" | "backlog" | "organizations" | "repos" | "history";
+type DesktopView =
+  | "today"
+  | "backlog"
+  | "organizations"
+  | "repos"
+  | "history"
+  | "machine-setup";
 
 type OrgDetailTab =
   | "company"
@@ -778,6 +796,8 @@ const VIEW_PAGE_HINT: Record<DesktopView, string> = {
   repos: "Confira o ambiente Git antes de comecar a trabalhar no projeto.",
   history:
     "Retome qualquer contexto sem depender da tarefa que esta aberta agora.",
+  "machine-setup":
+    "Monte um recipe opcional de bootstrap: pre-requisitos, Git, SSH, clone e CLIs.",
 };
 
 const ORG_DETAIL_TABS: { id: OrgDetailTab; label: string }[] = [
@@ -1109,6 +1129,9 @@ export function App() {
   const [backlogStatusFilter, setBacklogStatusFilter] = useState<string>("all");
   const [companyProfileId, setCompanyProfileId] = useState<string>(() =>
     readStoredCompanyProfileId(),
+  );
+  const [appThemeId, setAppThemeId] = useState<AppThemeId>(() =>
+    readStoredAppThemeId(),
   );
   const [backlogOrgFilter, setBacklogOrgFilter] = useState<string>(() =>
     readStoredCompanyProfileId(),
@@ -1476,6 +1499,10 @@ export function App() {
       cancelled = true;
     };
   }, [companyProfileId]);
+
+  useEffect(() => {
+    applyAppTheme(appThemeId);
+  }, [appThemeId]);
 
   const orgEnvSyncRef = useRef<string | null>(null);
   const orgIdentityContextRef = useRef<string | null>(null);
@@ -3142,6 +3169,15 @@ export function App() {
     setSelectedRepoBranch(null);
     setApplyResult(null);
     setHookResult(null);
+  }
+
+  function applyAppThemePreference(themeId: AppThemeId) {
+    if (themeId === appThemeId) {
+      return;
+    }
+    setAppThemeId(themeId);
+    persistAppThemeId(themeId);
+    applyAppTheme(themeId);
   }
 
   function applyCompanyProfile(organizationId: string) {
@@ -5928,7 +5964,9 @@ export function App() {
           ? "Empresa"
           : activeView === "history"
             ? "Historico"
-            : "Projetos";
+            : activeView === "machine-setup"
+              ? "Setup da maquina"
+              : "Projetos";
 
   const topBarSearchGroups = groupedSearchResults.map((group) => ({
     ...group,
@@ -5961,6 +5999,8 @@ export function App() {
             }))}
             onCompanyProfileChange={applyCompanyProfile}
             onManageOrganization={handleManageCompanyProfile}
+            themeId={appThemeId}
+            onThemeChange={applyAppThemePreference}
           />
         }
         topBar={
@@ -9301,6 +9341,8 @@ export function App() {
             )}
           />
         ) : null}
+
+        {activeView === "machine-setup" ? <MachineSetupView /> : null}
       </AppShell>
 
       <OrganizationCreateDialog

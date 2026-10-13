@@ -6,6 +6,7 @@ export type {
   HistoryKindFilter,
   HistoryViewProps,
 } from "./HistoryView";
+export { MachineSetupView } from "./MachineSetupView";
 export { OrganizationsView } from "./OrganizationsView";
 export { ReposView } from "./ReposView";
 export { TodayView } from "./TodayView";
