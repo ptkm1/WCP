@@ -63,6 +63,7 @@
   }
 
   /* Ambient aurora — dá cor ao liquid glass mesmo sobre desktop neutro */
+  html[data-theme="aurora"] body::before,
   body::before {
     content: "";
     position: fixed;
@@ -95,6 +96,41 @@
         rgba(10, 10, 18, 0.56) 0%,
         rgba(8, 10, 16, 0.4) 45%,
         rgba(6, 8, 14, 0.58) 100%
+      );
+  }
+
+  html[data-theme="verde"] {
+    --accent: 142 35% 16%;
+    --ring: 142 76% 48%;
+  }
+
+  html[data-theme="verde"] body::before {
+    background:
+      radial-gradient(
+        ellipse 68% 52% at 14% 16%,
+        rgba(34, 197, 94, 0.32),
+        transparent 55%
+      ),
+      radial-gradient(
+        ellipse 58% 46% at 86% 20%,
+        rgba(16, 185, 129, 0.26),
+        transparent 52%
+      ),
+      radial-gradient(
+        ellipse 62% 48% at 72% 84%,
+        rgba(74, 222, 128, 0.2),
+        transparent 55%
+      ),
+      radial-gradient(
+        ellipse 48% 42% at 18% 78%,
+        rgba(5, 150, 105, 0.18),
+        transparent 50%
+      ),
+      linear-gradient(
+        165deg,
+        rgba(6, 12, 10, 0.58) 0%,
+        rgba(5, 10, 8, 0.42) 45%,
+        rgba(4, 8, 7, 0.6) 100%
       );
   }
 
